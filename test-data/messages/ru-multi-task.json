@@ -1,0 +1,16 @@
+{
+  "category": "ru-multi-task",
+  "cases": [
+    {
+      "id": "multi-01",
+      "input": "Ивану проверить VPN, а мне обновить roadmap по Hermes до среды",
+      "expect": {
+        "intent": "create_tasks",
+        "tasks": [
+          {"assignee": "Иван", "project": "VPN"},
+          {"assignee": "Я", "project": "Hermes", "due_text": "до среды"}
+        ]
+      }
+    }
+  ]
+}

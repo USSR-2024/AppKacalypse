@@ -1,0 +1,61 @@
+"""
+Ollama-провайдер — рабочий режим (ТЗ §7). Шлёт текст в локальный Qwen и просит
+строго JSON (format=json). Парсинг/валидация — в main.py.
+"""
+import json
+from pathlib import Path
+
+import httpx
+
+from app.config import config
+from app.providers.base import LLMProvider
+from app.schemas import ExtractRequest
+
+_PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
+
+
+def _load(name: str) -> str:
+    return (_PROMPTS / name).read_text(encoding="utf-8")
+
+
+class OllamaProvider(LLMProvider):
+    name = "ollama"
+
+    def __init__(self) -> None:
+        self.system = _load("task_extraction_system.md")
+        self.user_template = _load("task_extraction_user_template.md")
+
+    def _build_user(self, req: ExtractRequest, now_iso: str) -> str:
+        return (
+            self.user_template
+            .replace("{{NOW_ISO}}", now_iso)
+            .replace("{{TIMEZONE}}", config.TIMEZONE)
+            .replace("{{AUTHOR}}", req.author or "автор")
+            .replace("{{SOURCE}}", req.source)
+            .replace("{{TEXT}}", req.text)
+        )
+
+    async def extract(self, req: ExtractRequest, now_iso: str) -> dict:
+        payload = {
+            "model": config.OLLAMA_MODEL,
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0.1},
+            "messages": [
+                {"role": "system", "content": self.system},
+                {"role": "user", "content": self._build_user(req, now_iso)},
+            ],
+        }
+        async with httpx.AsyncClient(timeout=config.REQUEST_TIMEOUT) as client:
+            resp = await client.post(f"{config.OLLAMA_BASE_URL}/api/chat", json=payload)
+            resp.raise_for_status()
+            content = resp.json()["message"]["content"]
+        return json.loads(content)
+
+    async def health(self) -> bool:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                r = await client.get(f"{config.OLLAMA_BASE_URL}/api/tags")
+                return r.status_code == 200
+        except Exception:
+            return False

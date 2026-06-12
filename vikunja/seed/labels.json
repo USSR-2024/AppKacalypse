@@ -1,0 +1,7 @@
+[
+  {"title": "source:telegram", "description": "Создано из Telegram"},
+  {"title": "source:email", "description": "Создано из email"},
+  {"title": "reminder", "description": "Напоминание"},
+  {"title": "needs-confirmation", "description": "Ожидает подтверждения автора"},
+  {"title": "has-calendar-event", "description": "Связано с календарным событием"}
+]

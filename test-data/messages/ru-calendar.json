@@ -1,0 +1,29 @@
+{
+  "category": "ru-calendar",
+  "note": "В текущей модели событие = задача Vikunja со временem; календарь подхватывает через фид.",
+  "cases": [
+    {
+      "id": "cal-01",
+      "input": "Завтра в 15:00 созвон с Иваном по Hermes",
+      "expect": {
+        "intent": "create_calendar_event",
+        "calendar_event": {"project": "Hermes", "participants": ["Иван"], "start_text": "завтра в 15:00"}
+      }
+    },
+    {
+      "id": "cal-02",
+      "input": "Завтра вечером напомни проверить статус задач по Hermes",
+      "expect": {"intent": "create_reminder", "tasks": [{"project": "Hermes"}]}
+    },
+    {
+      "id": "cal-03",
+      "input": "Ивану до пятницы подготовить список моделей для Qwen",
+      "expect": {"intent": "create_task", "tasks": [{"assignee": "Иван", "due_text": "до пятницы"}]}
+    },
+    {
+      "id": "cal-04",
+      "input": "В понедельник встреча по AletheiaOps",
+      "expect": {"intent": "create_calendar_event", "needs_confirmation": true, "questions_nonempty": true}
+    }
+  ]
+}

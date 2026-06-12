@@ -1,0 +1,23 @@
+# Caddy — HTTPS и reverse proxy.
+# Домены и email берутся из окружения (см. .env / docker-compose).
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN_TASKS} {
+	reverse_proxy vikunja:3456
+	encode gzip
+}
+
+{$DOMAIN_N8N} {
+	reverse_proxy n8n:5678
+	encode gzip
+}
+
+# Локально / без домена — отдаём по IP с internal-сертификатом.
+# Закомментируй блоки выше и раскомментируй ниже для dev:
+# :443 {
+# 	tls internal
+# 	reverse_proxy /n8n/* n8n:5678
+# 	reverse_proxy vikunja:3456
+# }

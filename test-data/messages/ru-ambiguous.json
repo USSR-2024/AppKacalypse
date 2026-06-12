@@ -1,0 +1,20 @@
+{
+  "category": "ru-ambiguous",
+  "cases": [
+    {
+      "id": "amb-01",
+      "input": "Надо бы как-нибудь разобраться с этим",
+      "expect": {"intent": "create_task", "needs_confirmation": true, "questions_nonempty": true}
+    },
+    {
+      "id": "amb-02",
+      "input": "Позвонить по тому вопросу",
+      "expect": {"intent": "create_task", "needs_confirmation": true}
+    },
+    {
+      "id": "amb-03",
+      "input": "Передай ему чтобы сделал",
+      "expect": {"intent": "create_task", "needs_confirmation": true, "questions_nonempty": true}
+    }
+  ]
+}

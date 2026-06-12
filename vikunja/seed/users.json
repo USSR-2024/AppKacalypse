@@ -1,0 +1,18 @@
+[
+  {
+    "name": "Я",
+    "aliases": ["мне", "себе", "меня"],
+    "telegram_id": "123456789",
+    "email": "owner@example.com",
+    "vikunja_user_id": 1,
+    "calendar_feed": "https://tasks.example.ru/api/v1/projects/-1/caldav/<token>"
+  },
+  {
+    "name": "Иван",
+    "aliases": ["иван", "ивану", "ваня", "ване"],
+    "telegram_id": "222222222",
+    "email": "ivan@example.com",
+    "vikunja_user_id": 2,
+    "calendar_feed": "https://tasks.example.ru/api/v1/projects/-1/caldav/<token>"
+  }
+]

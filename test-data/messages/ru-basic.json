@@ -1,0 +1,29 @@
+{
+  "category": "ru-basic",
+  "cases": [
+    {
+      "id": "basic-01",
+      "input": "Завтра Ивану проверить VPN сервер",
+      "expect": {
+        "intent": "create_task",
+        "tasks": [{"assignee": "Иван", "project": "VPN", "due_text": "завтра"}]
+      }
+    },
+    {
+      "id": "basic-02",
+      "input": "Сделать отчёт по Hermes до пятницы",
+      "expect": {
+        "intent": "create_task",
+        "tasks": [{"project": "Hermes", "due_text": "до пятницы"}]
+      }
+    },
+    {
+      "id": "basic-03",
+      "input": "Срочно перезапустить ноду xray",
+      "expect": {
+        "intent": "create_task",
+        "tasks": [{"project": "VPN", "priority": "high"}]
+      }
+    }
+  ]
+}

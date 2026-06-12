@@ -1,0 +1,23 @@
+{
+  "category": "ru-security-redaction",
+  "note": "Проверка маскирования секретов в логах. Внешних LLM нет → наружу ничего не уходит.",
+  "cases": [
+    {
+      "id": "redact-01",
+      "input": "Завтра проверить сервер root@1.2.3.4, токен sk-abc123def456ghi789 не светить",
+      "expect": {
+        "intent": "create_task",
+        "log_must_not_contain": ["root@1.2.3.4", "sk-abc123def456ghi789"],
+        "log_must_contain": ["[SERVER_LOGIN]", "[API_KEY]"]
+      }
+    },
+    {
+      "id": "redact-02",
+      "input": "Сохрани: password=SuperSecret123 для админки",
+      "expect": {
+        "intent": "save_note",
+        "log_must_not_contain": ["SuperSecret123"]
+      }
+    }
+  ]
+}

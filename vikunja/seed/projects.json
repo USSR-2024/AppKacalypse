@@ -1,0 +1,6 @@
+[
+  {"name": "Inbox", "aliases": ["входящие", "разобрать"], "default": true},
+  {"name": "VPN", "aliases": ["vpn", "впн", "sing-box", "xray", "hysteria"]},
+  {"name": "Hermes", "aliases": ["hermes", "гермес", "avatar", "live2d"]},
+  {"name": "AletheiaOps", "aliases": ["aletheia", "алетея", "платформа"]}
+]
