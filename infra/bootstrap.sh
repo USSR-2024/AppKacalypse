@@ -39,5 +39,6 @@ if ! dpkg -l | grep -q nvidia-container-toolkit; then
 fi
 
 log "4/4 Проверка проброса GPU в контейнер"
-docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu24.04 nvidia-smi \
+# nvidia-container-toolkit пробрасывает nvidia-smi в любой образ — спец. CUDA-образ не нужен.
+docker run --rm --gpus all ubuntu:24.04 nvidia-smi \
   && echo ">>> GPU доступен в контейнерах. Готово к deploy."
