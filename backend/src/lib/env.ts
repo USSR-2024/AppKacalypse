@@ -11,6 +11,8 @@ const schema = z.object({
   VAPID_PUBLIC_KEY: z.string().default(''),
   VAPID_PRIVATE_KEY: z.string().default(''),
   VAPID_SUBJECT: z.string().default('mailto:owner@baassist.ru'),
+  // Dev-only: вход без подписи Telegram для локального теста UI. НИКОГДА не ставить в проде.
+  ALLOW_DEV_AUTH: z.string().default('0'),
 });
 
 export const env = schema.parse(process.env);
