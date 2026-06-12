@@ -40,6 +40,8 @@ class OllamaProvider(LLMProvider):
             "model": config.OLLAMA_MODEL,
             "stream": False,
             "format": "json",
+            "think": False,                 # qwen3 — thinking-модель; рассуждения нам не нужны, только JSON
+            "keep_alive": config.KEEP_ALIVE,  # держим модель в VRAM между сообщениями
             "options": {"temperature": 0.1},
             "messages": [
                 {"role": "system", "content": self.system},
