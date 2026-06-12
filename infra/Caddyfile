@@ -5,13 +5,25 @@
 }
 
 {$DOMAIN_TASKS} {
-	reverse_proxy vikunja:3456
 	encode gzip
+	# Наше приложение: /api/* → бэкенд, остальное → фронт (Next).
+	handle /api/* {
+		reverse_proxy backend:8081
+	}
+	handle {
+		reverse_proxy frontend:3000
+	}
 }
 
 {$DOMAIN_N8N} {
 	reverse_proxy n8n:5678
 	encode gzip
+}
+
+# AppFlowy (пробный) — проксируем на его внутренний nginx через сеть edge.
+# Caddy терминирует TLS, дальше HTTP. Websocket (/ws) Caddy проксирует автоматически.
+appflowy.baassist.ru {
+	reverse_proxy appflowy-nginx:80
 }
 
 # Локально / без домена — отдаём по IP с internal-сертификатом.

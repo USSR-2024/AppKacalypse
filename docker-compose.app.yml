@@ -1,0 +1,29 @@
+# Наше приложение (бэк + фронт) поверх существующего стека.
+# Подключается к общей сети appkacalypse_default → видит postgres, llm-gateway;
+# Caddy из той же сети проксирует на backend:8081 и frontend:3000.
+services:
+  backend:
+    build: ./backend
+    image: akc-backend
+    container_name: akc-backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      ALLOW_DEV_AUTH: "0"   # прод: dev-вход выключен жёстко
+    networks: [default]
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_TG_BOT: appKACAlypse_bot
+        NEXT_PUBLIC_ALLOW_DEV: "0"
+    image: akc-frontend
+    container_name: akc-frontend
+    restart: unless-stopped
+    networks: [default]
+
+networks:
+  default:
+    external: true
+    name: appkacalypse_default
