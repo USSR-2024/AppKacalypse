@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, boolean, timestamp, jsonb, pgEnum, unique, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, boolean, timestamp, jsonb, integer, pgEnum, unique, index } from 'drizzle-orm/pg-core';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Enums
@@ -154,6 +154,16 @@ export const taskActivity = pgTable('task_activity', {
 }, (t) => ({
   taskIdx: index('task_activity_task_idx').on(t.taskId),
 }));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// bot_sessions — состояние доспроса в Telegram (1 незавершённый черновик на чат).
+// ─────────────────────────────────────────────────────────────────────────────
+export const botSessions = pgTable('bot_sessions', {
+  telegramId: text('telegram_id').primaryKey(),   // = chat_id / from.id
+  text: text('text').notNull(),                   // накопленный текст задачи
+  rounds: integer('rounds').notNull().default(0), // сколько раз уже доспрашивали
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // push_subscriptions — Web Push (PWA). Один user → много устройств.
