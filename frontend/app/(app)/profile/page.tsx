@@ -76,6 +76,21 @@ export default function ProfilePage() {
       </section>
 
       <section className="mb-5">
+        <h2 className="mb-2 px-1 text-xs uppercase tracking-wide text-muted">Вид в проекте</h2>
+        <div className="flex rounded-2xl bg-surface p-1 text-sm">
+          {([["list", "Список"], ["board", "Доска"], ["table", "Таблица"]] as const).map(([v, label]) => (
+            <button
+              key={v}
+              onClick={() => patch({ projectView: v })}
+              className={`flex-1 rounded-xl px-3 py-2 ${draft.projectView === v ? "bg-surface-2 font-medium" : "text-muted"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="mb-5">
         <h2 className="mb-2 px-1 text-xs uppercase tracking-wide text-muted">Куда присылать</h2>
         <div className="flex flex-col gap-2 rounded-2xl bg-surface p-1">
           {CHANNELS.map((ch) => (

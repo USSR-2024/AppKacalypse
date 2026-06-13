@@ -1,4 +1,5 @@
 export type TaskStatus = "queued" | "in_progress" | "done" | "cancelled" | "archived";
+export type ProjectView = "list" | "board" | "table";
 export type Priority = "low" | "normal" | "high";
 export type TaskSource = "app" | "telegram" | "email" | "calendar" | "ai";
 
@@ -44,6 +45,7 @@ export interface Me {
   role: string;
   timezone: string;
   lang: string;
+  projectView: ProjectView;
   notifyMorning: boolean;
   notifyEvening: boolean;
   morningTime: string;

@@ -39,6 +39,7 @@ app.get('/api/me', requireAuth, async (c) => {
       role: schema.users.role,
       timezone: schema.users.timezone,
       lang: schema.users.lang,
+      projectView: schema.users.projectView,
       notifyMorning: schema.users.notifyMorning,
       notifyEvening: schema.users.notifyEvening,
       morningTime: schema.users.morningTime,

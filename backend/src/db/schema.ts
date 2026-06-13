@@ -49,6 +49,7 @@ export const users = pgTable('users', {
   avatarUrl: text('avatar_url'),
   timezone: text('timezone').notNull().default('Europe/Moscow'),
   lang: text('lang').notNull().default('ru'),
+  projectView: text('project_view').notNull().default('list'),  // вид в проекте: list | board | table
 
   // Настройки напоминаний
   notifyMorning: boolean('notify_morning').notNull().default(true),

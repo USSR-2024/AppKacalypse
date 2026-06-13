@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "project_view" text DEFAULT 'list' NOT NULL;

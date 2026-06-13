@@ -24,6 +24,7 @@ const updateMeSchema = z.object({
   displayName: z.string().min(1).max(200).optional(),
   timezone: z.string().max(64).optional(),
   lang: z.enum(['ru', 'es', 'en']).optional(),
+  projectView: z.enum(['list', 'board', 'table']).optional(),
   notifyMorning: z.boolean().optional(),
   notifyEvening: z.boolean().optional(),
   morningTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
@@ -42,7 +43,7 @@ userRoutes.patch('/me', async (c) => {
     .where(eq(u.id, me.sub))
     .returning({
       id: u.id, displayName: u.displayName, role: u.role, timezone: u.timezone,
-      lang: u.lang, notifyMorning: u.notifyMorning, notifyEvening: u.notifyEvening,
+      lang: u.lang, projectView: u.projectView, notifyMorning: u.notifyMorning, notifyEvening: u.notifyEvening,
       morningTime: u.morningTime, eveningTime: u.eveningTime, notifyChannels: u.notifyChannels,
     });
   return c.json(updated);
