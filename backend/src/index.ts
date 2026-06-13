@@ -30,9 +30,14 @@ app.get('/api/me', requireAuth, async (c) => {
     .select({
       id: schema.users.id,
       displayName: schema.users.displayName,
+      avatarUrl: schema.users.avatarUrl,
       role: schema.users.role,
       timezone: schema.users.timezone,
       lang: schema.users.lang,
+      notifyMorning: schema.users.notifyMorning,
+      notifyEvening: schema.users.notifyEvening,
+      morningTime: schema.users.morningTime,
+      eveningTime: schema.users.eveningTime,
       notifyChannels: schema.users.notifyChannels,
     })
     .from(schema.users)

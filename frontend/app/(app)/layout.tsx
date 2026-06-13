@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import useSWR from "swr";
 import { useAuth } from "@/lib/store";
 import { fetcher } from "@/lib/api";
@@ -29,6 +30,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col">
+      <Link
+        href="/profile"
+        className="fixed right-4 top-4 z-30 flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-surface text-sm"
+        aria-label="Профиль"
+      >
+        {me?.avatarUrl ? (
+          <img src={me.avatarUrl} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <span>{me?.displayName?.slice(0, 1) ?? "·"}</span>
+        )}
+      </Link>
+
       <div className="flex-1 pb-24">{children}</div>
 
       <button

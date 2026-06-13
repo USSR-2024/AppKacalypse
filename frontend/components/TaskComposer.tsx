@@ -2,7 +2,14 @@
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { refreshTasks, useProjects, useUsers } from "@/lib/hooks";
+import { SheetSelect, type Opt } from "@/components/SheetSelect";
 import type { Priority } from "@/lib/types";
+
+const PRIORITY_OPTS: Opt[] = [
+  { value: "low", label: "Низкий приоритет" },
+  { value: "normal", label: "Обычный приоритет" },
+  { value: "high", label: "Высокий приоритет" },
+];
 
 export function TaskComposer({ onClose, defaultProjectId }: { onClose: () => void; defaultProjectId?: string }) {
   const { data: projects } = useProjects();
@@ -14,6 +21,9 @@ export function TaskComposer({ onClose, defaultProjectId }: { onClose: () => voi
   const [priority, setPriority] = useState<Priority>("normal");
   const [important, setImportant] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  const projectOpts: Opt[] = (projects ?? []).map((p) => ({ value: p.id, label: p.name, color: p.color || "#4f8cff" }));
+  const userOpts: Opt[] = (users ?? []).map((u) => ({ value: u.id, label: u.displayName, avatar: u.avatarUrl }));
 
   async function submit() {
     if (!title.trim()) return;
@@ -54,26 +64,18 @@ export function TaskComposer({ onClose, defaultProjectId }: { onClose: () => voi
           onKeyDown={(e) => e.key === "Enter" && submit()}
         />
 
-        <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-          <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="rounded-xl bg-surface px-3 py-2.5 text-text">
-            <option value="">Без проекта</option>
-            {projects?.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-          <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className="rounded-xl bg-surface px-3 py-2.5 text-text">
-            <option value="">Исполнитель</option>
-            {users?.map((u) => <option key={u.id} value={u.id}>{u.displayName}</option>)}
-          </select>
-          <input
-            type="datetime-local"
-            value={due}
-            onChange={(e) => setDue(e.target.value)}
-            className="rounded-xl bg-surface px-3 py-2.5 text-text"
-          />
-          <select value={priority} onChange={(e) => setPriority(e.target.value as Priority)} className="rounded-xl bg-surface px-3 py-2.5 text-text">
-            <option value="low">Низкий</option>
-            <option value="normal">Обычный</option>
-            <option value="high">Высокий</option>
-          </select>
+        <div className="mt-4 flex flex-col gap-2">
+          <SheetSelect title="Проект" placeholder="Без проекта" value={projectId} onChange={setProjectId} options={projectOpts} />
+          <SheetSelect title="Исполнитель" placeholder="Без исполнителя" value={assigneeId} onChange={setAssigneeId} options={userOpts} />
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              type="datetime-local"
+              value={due}
+              onChange={(e) => setDue(e.target.value)}
+              className="rounded-xl bg-surface px-3 py-2.5 text-sm text-text"
+            />
+            <SheetSelect title="Приоритет" placeholder="Приоритет" value={priority} onChange={(v) => setPriority(v as Priority)} options={PRIORITY_OPTS} allowClear={false} />
+          </div>
         </div>
 
         <div className="mt-3 flex items-center justify-between">

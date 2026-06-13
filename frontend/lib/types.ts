@@ -40,8 +40,13 @@ export interface User {
 export interface Me {
   id: string;
   displayName: string;
+  avatarUrl: string | null;
   role: string;
   timezone: string;
   lang: string;
+  notifyMorning: boolean;
+  notifyEvening: boolean;
+  morningTime: string;
+  eveningTime: string;
   notifyChannels: string[];
 }
