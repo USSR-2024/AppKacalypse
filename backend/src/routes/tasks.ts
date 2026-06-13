@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { and, asc, desc, eq, gte, inArray, lte, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lte, or, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '../db/index.js';
 import { requireAuth } from '../lib/auth-middleware.js';
@@ -17,6 +17,25 @@ const t = schema.tasks;
 
 function canModify(task: { creatorId: string; assigneeId: string | null }, u: SessionClaims): boolean {
   return task.creatorId === u.sub || task.assigneeId === u.sub || u.role === 'admin' || u.role === 'owner';
+}
+
+// Проекты, где пользователь — участник (для видимости проектных задач).
+async function myProjectIds(userId: string): Promise<string[]> {
+  const rows = await db
+    .select({ pid: schema.projectMembers.projectId })
+    .from(schema.projectMembers)
+    .where(eq(schema.projectMembers.userId, userId));
+  return rows.map((r) => r.pid);
+}
+
+// Видимость: member видит задачи, где он автор/исполнитель или член проекта.
+// owner/admin видят всё (надзор). Возвращает null, если ограничение не нужно.
+async function visibilityCond(u: SessionClaims): Promise<SQL | null> {
+  if (u.role === 'owner' || u.role === 'admin') return null;
+  const pids = await myProjectIds(u.sub);
+  const ors: SQL[] = [eq(t.creatorId, u.sub), eq(t.assigneeId, u.sub)];
+  if (pids.length) ors.push(inArray(t.projectId, pids));
+  return or(...ors)!;
 }
 
 // ── создание ────────────────────────────────────────────────────────────────
@@ -84,6 +103,9 @@ taskRoutes.get('/', async (c) => {
   if (q.dueBefore) conds.push(lte(t.dueAt, new Date(q.dueBefore)));
   if (q.dueAfter) conds.push(gte(t.dueAt, new Date(q.dueAfter)));
 
+  const vis = await visibilityCond(u);
+  if (vis) conds.push(vis);
+
   const rows = await db
     .select()
     .from(t)
@@ -96,8 +118,16 @@ taskRoutes.get('/', async (c) => {
 
 // ── одна задача ───────────────────────────────────────────────────────────────
 taskRoutes.get('/:id', async (c) => {
+  const u = c.get('user');
   const [task] = await db.select().from(t).where(eq(t.id, c.req.param('id'))).limit(1);
   if (!task) return c.json({ error: 'not_found' }, 404);
+  if (u.role !== 'owner' && u.role !== 'admin') {
+    const visible =
+      task.creatorId === u.sub ||
+      task.assigneeId === u.sub ||
+      (!!task.projectId && (await myProjectIds(u.sub)).includes(task.projectId));
+    if (!visible) return c.json({ error: 'not_found' }, 404);
+  }
   return c.json(task);
 });
 

@@ -28,8 +28,10 @@ export default function TodayPage() {
   const overdue = tasks.filter((t) => { const d = due(t); return d && isPast(d) && !isToday(d); });
   const today = tasks.filter((t) => { const d = due(t); return d && isToday(d); });
   const rest = tasks.filter((t) => !overdue.includes(t) && !today.includes(t));
-  const important = rest.filter((t) => t.isImportant);
-  const other = rest.filter((t) => !t.isImportant);
+  const upcoming = rest.filter((t) => due(t));        // есть срок, но не сегодня/не просрочено
+  const noDue = rest.filter((t) => !due(t));
+  const important = noDue.filter((t) => t.isImportant);
+  const other = noDue.filter((t) => !t.isImportant);
 
   return (
     <main className="px-4 pt-12">
@@ -46,6 +48,7 @@ export default function TodayPage() {
         <>
           <Section title="Просрочено" tasks={overdue} tone="text-danger" />
           <Section title="Сегодня" tasks={today} tone="text-warn" />
+          <Section title="Предстоит" tasks={upcoming} />
           <Section title="Важное" tasks={important} />
           <Section title="Без срока" tasks={other} />
         </>
