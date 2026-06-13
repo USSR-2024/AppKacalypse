@@ -59,7 +59,8 @@ def _apply_confirmation(result: ExtractResult) -> ExtractResult:
 @app.post("/extract", response_model=ExtractResult)
 async def extract(req: ExtractRequest) -> ExtractResult:
     now_iso = req.now_iso or datetime.now(timezone.utc).astimezone().isoformat()
-    log.info("extract source=%s text=%r", req.source, redact(req.text))
+    # Тело сообщения НЕ логируем (приватность) — только метаданные.
+    log.info("extract source=%s len=%d", req.source, len(req.text))
 
     try:
         raw = await provider.extract(req, now_iso)
@@ -70,7 +71,9 @@ async def extract(req: ExtractRequest) -> ExtractResult:
     try:
         result = ExtractResult(**raw)
     except ValidationError as e:
-        log.error("invalid LLM JSON: %s", e)
+        # Без input-значений в логе — там могут быть куски сообщения пользователя.
+        errs = [f"{'.'.join(map(str, x['loc']))}: {x['type']}" for x in e.errors(include_input=False)]
+        log.error("invalid LLM JSON: %s", "; ".join(errs))
         raise HTTPException(status_code=422, detail="invalid_llm_output")
 
     # sanity: календарный intent без события / задачный без задач
