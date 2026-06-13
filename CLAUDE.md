@@ -3,51 +3,54 @@
 Гайд для Claude Code и разработчика. Читать перед работой.
 
 ## Что это
-AI-диспетчер задач/заметок/напоминаний/календаря. Текст из Telegram/email →
-локальный Qwen (Ollama, GPU) извлекает JSON → n8n создаёт объекты в Vikunja и
-календаре. Одно-серверная автономная система, **без внешних LLM-API**.
+AI-диспетчер задач для личной и командной работы. Задачи ставятся обычным языком
+(PWA-приложение / встроенный чат-ассистент / Telegram-бот) → локальный Qwen разбирает
+в структуру → задача создаётся в своей БД → система напоминает о сроках.
+**Свой бэкенд + PWA на своём GPU-сервере. Без внешних LLM-API.** Единственная внешняя
+зависимость — Telegram-бот (вход + интейк + дайджесты).
 
-Полное ТЗ: `docs/ТЗ-appkacalypse.md`. Статус: `docs/СТАТУС.md`.
+> **Разворот (2026-06-12):** изначально строили на Vikunja+n8n — отказались (UI «не вкусный»,
+> слабый API). Пишем своё, переиспользуя AI-ядро (Gateway+Qwen), сервер, Caddy, HTTPS.
+
+Продуктовое ТЗ: `docs/ТЗ-app.md`. Инфра/Gateway ТЗ: `docs/ТЗ-appkacalypse.md`. Статус: `docs/СТАТУС.md`.
 
 ## Инфраструктура и доступы
-- **Control-сервер `89.125.2.39`** (вне РФ): здесь работает Claude Code, тут git-копия.
-  Правки → commit → push в GitHub.
-- **GPU-сервер `158.255.0.82`** (RU, Hostkey; SSH порт **19949**, root по ключу):
-  рантайм-копия, тут крутится весь docker-стек. Деплой = `git pull` + `docker compose up`.
-  - A4000 16GB · 8 vCPU · 31GB RAM · Ubuntu 24.04.
-  - SSH: `ssh -i ~/.ssh/hermes_key2 -p 19949 root@158.255.0.82`
-- **GitHub** `git@github.com:USSR-2024/AppKacalypse.git` — доступ через SSH-over-443
-  (порт 22 заблокирован на обеих машинах). Конфиг в `~/.ssh/config`.
-- Anthropic заблокирован из РФ → Claude НЕ запускается на 158, только на control.
+- **Control `89.125.2.39`** (вне РФ): тут Claude Code + git. Правки → commit → push.
+  Anthropic из РФ заблокирован → Claude НЕ запускается на 158, только тут.
+- **GPU-сервер `158.255.0.82`** (RU, A4000 16GB, Ubuntu 24.04; SSH порт **19949**):
+  рантайм. `ssh -i ~/.ssh/hermes_key2 -p 19949 root@158.255.0.82`
+- **GitHub** `USSR-2024/AppKacalypse`, ветка `main`, SSH-over-443 (host-alias `github-appkacalypse`, deploy key с write).
+- **Домен:** `appkacalypse.baassist.ru` → приложение (фронт + `/api`→бэк). HTTPS Caddy+LE.
+- **Бот:** `@appKACAlypse_bot`.
 
-## Архитектурные правила (из ТЗ)
-1. **LLM только извлекает JSON.** Создание задач/событий делает n8n/backend ПОСЛЕ
-   JSON Schema validation + confidence threshold + confirmation flow.
+## Стек
+- **Backend:** Node+TS+Hono+Postgres+Drizzle+Zod+JWT. `backend/`. Контейнер `akc-backend:8081`.
+- **Frontend:** Next.js 16 PWA (App Router, Tailwind v4, SWR+Zustand). `frontend/`. Контейнер `akc-frontend:3000`.
+- **LLM Gateway:** FastAPI + `qwen3:14b` (Ollama, GPU). `services/llm-gateway/`. `think:false` → ~5с.
+- **БД приложения:** отдельная база `akc` в `appkacalypse-postgres-1` (НЕ task_dispatcher — там Vikunja).
+
+## Деплой (вручную; rsync на 158 НЕТ)
+1. Код на 158: `tar czf - --exclude=node_modules --exclude=.next --exclude=dist --exclude='.env*' backend frontend services/llm-gateway | ssh ... 'tar xzf - -C /root/appkacalypse'`
+2. Пересборка: бэк/фронт — `docker compose -p akcapp -f /root/appkacalypse/docker-compose.app.yml up -d --build backend frontend`; gateway — `docker compose -p appkacalypse -f /root/appkacalypse/docker-compose.yml up -d --build llm-gateway`. **Абсолютные пути обязательны** (ssh-команды стартуют в /root, не в проекте).
+3. Бэк мигрирует БД на старте (CMD: `migrate.js && index.js`).
+4. Caddy: правка `infra/Caddyfile` → `docker restart appkacalypse-caddy-1` (reload через exec НЕ применяется).
+
+## Архитектурные правила
+1. **LLM только извлекает JSON.** Создание/изменение делает бэкенд после валидации.
 2. **LLM не имеет доступа** к серверу, БД, секретам.
-3. **Никаких внешних API** для работы приложения. Провайдер `eu_relay` — только
-   зарезервированная точка расширения, не реализуется.
-4. `LLM_PROVIDER`: `mock` (тесты без GPU) | `ollama` (рабочий режим).
-5. **Секреты только в `.env`** (не коммитится) или Docker secrets. `.env.example` — коммитится.
-6. **Redaction**: логи без токенов/паролей/ключей (regex-фильтр в Gateway).
-7. **Автоудаление/автоизменение задач без подтверждения запрещено.**
+3. **Секреты только в `.env`** (gitignored). `backend/.env`, `frontend/.env.local` — на 158, не в git.
+4. **`users.id` = внутренний UUID**, способы входа в `auth_identities` (отвязаны от id).
+5. Только Drizzle ORM, Zod-валидация, JWT на защищённых эндпоинтах. Без лишних комментариев/абстракций.
+6. **Прод-безопасность:** `ALLOW_DEV_AUTH=0`, `NEXT_PUBLIC_ALLOW_DEV=0` (dev-вход только локально).
 
-## Границы MVP
-- В MVP: Telegram (текст + forward) и email intake, Vikunja, Gateway, Qwen,
-  confirmation flow, бэкапы, healthcheck. Календарь — MVP+ (по умолчанию `disabled`).
-- НЕ в MVP: голос/Whisper/STT, мобильное приложение, RAG, SSO, авто-выполнение shell.
+## Готово (S2–S5, всё задеплоено)
+CRUD задач/проектов/юзеров · Telegram-авторизация · PWA (Сегодня/Входящие/Проекты+канбан/Календарь/Профиль/Выполненные/правка задачи) · AI-ассистент в приложении (создание + Q&A) · Telegram-бот (интейк + доспрос + Q&A) · напоминания утро/вечер в Telegram.
+
+## Бэклог
+Ассистент внутри проекта (контекстный Q&A) · push-канал (VAPID готов, нужен SW+подписка) · email-канал · календарь-сетка · свайпы · иконка · уборка Vikunja/n8n/AppFlowy из стека.
 
 ## Рабочий процесс
-- Ветка `main`. Фичи — через ветки `sprintN-*`, PR в `main`.
-- Коммиты атомарные, по-русски, без секретов.
-- Перед коммитом: тесты Gateway (`pytest services/llm-gateway`), `docker compose config`.
-- Деплой на 158: `infra/deploy.sh` (pull + build + up + smoke).
-
-## Модель
-Основная — `qwen3:14b` (Q4 ~9-10GB, A4000 тянет). Тестовая для сравнения — `qwen3:8b`.
-
-## Спринты (см. ТЗ §16)
-S0 репо/скаффолд · S1 базовый стек · S2 Telegram intake · S3 Qwen+Gateway ·
-S4 задачи в Vikunja · S5 confirmation · S5.5-5.8 календарь · S6 качество ·
-S7 fallback/очередь · S8 deploy-скрипты.
-
-**Сейчас: Sprint 0.**
+- Ветка `main`. Коммиты атомарные, по-русски, без секретов.
+- Перед коммитом: `npm run typecheck` (backend), `npm run build` (frontend).
+- Общение с владельцем: по-русски, коротко.
+- Бот может писать юзеру только после того, как тот сделал `/start` (ограничение Telegram).
