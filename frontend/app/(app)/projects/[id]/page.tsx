@@ -1,5 +1,5 @@
 "use client";
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/store";
 import { useProjects, useTasks, useUsers } from "@/lib/hooks";
@@ -42,6 +42,15 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   useEffect(() => { if (view === null && me) setView(me.projectView); }, [me, view]);
   const v: ProjectView = view ?? me?.projectView ?? "list";
 
+  // Доска: свайп по колонкам (по экрану на колонку), gap-3 = 12px между ними.
+  const boardRef = useRef<HTMLDivElement>(null);
+  const [activeCol, setActiveCol] = useState(0);
+  const step = () => (boardRef.current?.clientWidth ?? 0) + 12;
+  const onBoardScroll = () => {
+    if (boardRef.current) setActiveCol(Math.round(boardRef.current.scrollLeft / step()));
+  };
+  const goCol = (i: number) => boardRef.current?.scrollTo({ left: i * step(), behavior: "smooth" });
+
   const active = tasks.filter((t) => t.status === "queued" || t.status === "in_progress");
   const done = tasks.filter((t) => t.status === "done");
 
@@ -71,42 +80,56 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       ) : tasks.length === 0 ? (
         <p className="mt-8 text-center text-muted">В проекте пока нет задач</p>
       ) : v === "board" ? (
-        <div className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-2">
-          {BOARD_COLS.map((col) => {
-            const colTasks = tasks.filter((t) => t.status === col);
-            return (
-              <div key={col} className="flex w-64 shrink-0 flex-col gap-2">
-                <div className="px-1 text-xs font-medium uppercase tracking-wide text-muted">
-                  {STATUS_LABELS[col]} · {colTasks.length}
-                </div>
-                {colTasks.map((t) => <MiniCard key={t.id} task={t} />)}
-                {colTasks.length === 0 && <div className="rounded-xl border border-dashed border-border py-6 text-center text-xs text-muted">пусто</div>}
-              </div>
-            );
-          })}
-        </div>
-      ) : v === "table" ? (
-        <div className="-mx-4 overflow-x-auto px-4">
-          <div className="min-w-[28rem]">
-            <div className="grid grid-cols-[1fr_7rem_4rem_5rem] gap-2 border-b border-border px-2 pb-2 text-xs uppercase tracking-wide text-muted">
-              <span>Задача</span><span>Исполнитель</span><span>Срок</span><span>Статус</span>
-            </div>
-            {tasks.map((t) => {
-              const assignee = users?.find((u) => u.id === t.assigneeId);
+        <div>
+          <div className="mb-3 flex gap-1 rounded-xl bg-surface p-0.5 text-xs">
+            {BOARD_COLS.map((col, i) => (
+              <button
+                key={col}
+                onClick={() => goCol(i)}
+                className={`flex-1 rounded-lg px-2 py-1.5 ${activeCol === i ? "bg-surface-2 font-medium" : "text-muted"}`}
+              >
+                {STATUS_LABELS[col]} · {tasks.filter((t) => t.status === col).length}
+              </button>
+            ))}
+          </div>
+          <div
+            ref={boardRef}
+            onScroll={onBoardScroll}
+            className="flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            {BOARD_COLS.map((col) => {
+              const colTasks = tasks.filter((t) => t.status === col);
               return (
-                <Link
-                  key={t.id}
-                  href={`/tasks/${t.id}`}
-                  className="grid grid-cols-[1fr_7rem_4rem_5rem] items-center gap-2 border-b border-border/50 px-2 py-2.5 text-sm active:bg-surface"
-                >
-                  <span className="truncate">{t.isImportant && <span className="mr-1 text-warn">★</span>}{t.title}</span>
-                  <span className="truncate text-xs text-muted">{assignee?.displayName ?? "—"}</span>
-                  <span className="text-xs text-muted">{fmtDue(t.dueAt)}</span>
-                  <span className="text-xs text-muted">{STATUS_LABELS[t.status]}</span>
-                </Link>
+                <div key={col} className="flex w-full shrink-0 snap-start flex-col gap-2">
+                  {colTasks.map((t) => <MiniCard key={t.id} task={t} />)}
+                  {colTasks.length === 0 && <div className="rounded-xl border border-dashed border-border py-12 text-center text-xs text-muted">пусто</div>}
+                </div>
               );
             })}
           </div>
+        </div>
+      ) : v === "table" ? (
+        <div className="overflow-hidden rounded-2xl bg-surface">
+          <div className="grid grid-cols-[1fr_3.5rem_5rem] gap-2 border-b border-border px-3 py-2 text-[11px] uppercase tracking-wide text-muted">
+            <span>Задача</span><span>Срок</span><span>Статус</span>
+          </div>
+          {tasks.map((t) => {
+            const assignee = users?.find((u) => u.id === t.assigneeId);
+            return (
+              <Link
+                key={t.id}
+                href={`/tasks/${t.id}`}
+                className="grid grid-cols-[1fr_3.5rem_5rem] items-center gap-2 border-b border-border/40 px-3 py-3 text-sm last:border-0 active:bg-surface-2"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate">{t.isImportant && <span className="mr-1 text-warn">★</span>}{t.title}</span>
+                  {assignee && <span className="block truncate text-xs text-muted">👤 {assignee.displayName}</span>}
+                </span>
+                <span className="text-xs text-muted">{fmtDue(t.dueAt)}</span>
+                <span className="text-xs text-muted">{STATUS_LABELS[t.status]}</span>
+              </Link>
+            );
+          })}
         </div>
       ) : (
         <div className="flex flex-col gap-2">
