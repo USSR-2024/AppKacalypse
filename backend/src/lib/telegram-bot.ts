@@ -153,7 +153,11 @@ export async function processUpdate(update: TgUpdate): Promise<void> {
       );
       return;
     }
-    const [info] = await db.select({ displayName: schema.users.displayName }).from(schema.users).where(eq(schema.users.id, u.id)).limit(1);
+    const [info] = await db.select({ displayName: schema.users.displayName, isActive: schema.users.isActive }).from(schema.users).where(eq(schema.users.id, u.id)).limit(1);
+    if (info && !info.isActive) {
+      await sendMessage(chatId, "Доступ приостановлен администратором.");
+      return;
+    }
     await sendMessage(
       chatId,
       `Привет, ${esc(info?.displayName ?? "")}! 👋\n\nЯ AI-диспетчер задач. Пиши задачи обычным языком — «завтра Ивану проверить VPN к 15:00» — или жми кнопки ниже.`,
@@ -174,11 +178,12 @@ export async function processUpdate(update: TgUpdate): Promise<void> {
     return;
   }
   const [user] = await db
-    .select({ id: schema.users.id, displayName: schema.users.displayName, timezone: schema.users.timezone })
+    .select({ id: schema.users.id, displayName: schema.users.displayName, timezone: schema.users.timezone, isActive: schema.users.isActive })
     .from(schema.users)
     .where(eq(schema.users.id, ident.userId))
     .limit(1);
   if (!user) return;
+  if (!user.isActive) { await sendMessage(chatId, "Доступ приостановлен администратором."); return; }
   const tz = user.timezone;
 
   // ── Кнопки меню (перехват до отправки в модель) ──────────────────────────────

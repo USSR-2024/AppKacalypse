@@ -38,6 +38,15 @@ export interface User {
   role: string;
 }
 
+export interface AdminUser {
+  id: string;
+  displayName: string;
+  avatarUrl: string | null;
+  role: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
 export interface Me {
   id: string;
   displayName: string;

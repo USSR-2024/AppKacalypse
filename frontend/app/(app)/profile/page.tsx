@@ -101,6 +101,13 @@ export default function ProfilePage() {
         <span className="text-muted">›</span>
       </Link>
 
+      {(draft.role === "owner" || draft.role === "admin") && (
+        <Link href="/users" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
+          <span>👥 Пользователи</span>
+          <span className="text-muted">›</span>
+        </Link>
+      )}
+
       <button onClick={logout} className="w-full rounded-2xl bg-surface px-4 py-3.5 text-left text-danger">
         Выйти
       </button>
