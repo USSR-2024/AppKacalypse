@@ -6,6 +6,10 @@ export function useTasks(query: string) {
   return useSWR<Task[]>(`/tasks${query}`, fetcher);
 }
 
+export function useTask(id: string) {
+  return useSWR<Task>(id ? `/tasks/${id}` : null, fetcher);
+}
+
 export function useProjects() {
   return useSWR<Project[]>("/projects", fetcher);
 }
