@@ -10,6 +10,7 @@ import { authRoutes } from './routes/auth.js';
 import { taskRoutes } from './routes/tasks.js';
 import { projectRoutes } from './routes/projects.js';
 import { userRoutes } from './routes/users.js';
+import { assistantRoutes } from './routes/assistant.js';
 
 const app = new Hono();
 
@@ -22,6 +23,7 @@ app.route('/api/auth', authRoutes);
 app.route('/api/tasks', taskRoutes);
 app.route('/api/projects', projectRoutes);
 app.route('/api/users', userRoutes);
+app.route('/api/assistant', assistantRoutes);
 
 // Текущий пользователь по JWT.
 app.get('/api/me', requireAuth, async (c) => {

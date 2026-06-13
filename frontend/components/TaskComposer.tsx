@@ -67,15 +67,16 @@ export function TaskComposer({ onClose, defaultProjectId }: { onClose: () => voi
         <div className="mt-4 flex flex-col gap-2">
           <SheetSelect title="Проект" placeholder="Без проекта" value={projectId} onChange={setProjectId} options={projectOpts} />
           <SheetSelect title="Исполнитель" placeholder="Без исполнителя" value={assigneeId} onChange={setAssigneeId} options={userOpts} />
-          <div className="grid grid-cols-2 gap-2">
+          <label className="flex items-center justify-between gap-2 rounded-xl bg-surface px-3 py-2.5 text-sm">
+            <span className="shrink-0 text-muted">Дедлайн</span>
             <input
               type="datetime-local"
               value={due}
               onChange={(e) => setDue(e.target.value)}
-              className="rounded-xl bg-surface px-3 py-2.5 text-sm text-text"
+              className="min-w-0 flex-1 bg-transparent text-right text-text outline-none"
             />
-            <SheetSelect title="Приоритет" placeholder="Приоритет" value={priority} onChange={(v) => setPriority(v as Priority)} options={PRIORITY_OPTS} allowClear={false} />
-          </div>
+          </label>
+          <SheetSelect title="Приоритет" placeholder="Приоритет" value={priority} onChange={(v) => setPriority(v as Priority)} options={PRIORITY_OPTS} allowClear={false} />
         </div>
 
         <div className="mt-3 flex items-center justify-between">
