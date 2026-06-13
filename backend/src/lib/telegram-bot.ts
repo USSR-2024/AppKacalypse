@@ -1,6 +1,5 @@
 import { and, eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
-import { env } from "./env.js";
 import { logActivity } from "./activity.js";
 import {
   gatewayExtract,
@@ -21,12 +20,12 @@ function fmtDate(d: string | Date, tz: string): string {
   return new Date(d).toLocaleString("ru-RU", { timeZone: tz, day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
+/**
+ * Кладёт сообщение в очередь tg_outbox. Сам бэк (РФ) до api.telegram.org не достучится —
+ * исходящие забирает и шлёт релей вне РФ (см. /api/telegram/outbox).
+ */
 export async function sendMessage(chatId: number | string, text: string): Promise<void> {
-  await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true }),
-  }).catch(() => {});
+  await db.insert(schema.tgOutbox).values({ chatId: String(chatId), body: text }).catch(() => {});
 }
 
 export function formatTaskList(tasks: TaskRow[], tz: string): string {

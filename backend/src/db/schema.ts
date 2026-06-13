@@ -166,6 +166,20 @@ export const botSessions = pgTable('bot_sessions', {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// tg_outbox — очередь исходящих в Telegram. Бэк (РФ) не достучится до api.telegram.org,
+// поэтому пишет сюда, а релей вне РФ забирает и отправляет.
+// ─────────────────────────────────────────────────────────────────────────────
+export const tgOutbox = pgTable('tg_outbox', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  chatId: text('chat_id').notNull(),
+  body: text('body').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+}, (t) => ({
+  pendingIdx: index('tg_outbox_pending_idx').on(t.createdAt),
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
 // push_subscriptions — Web Push (PWA). Один user → много устройств.
 // ─────────────────────────────────────────────────────────────────────────────
 export const pushSubscriptions = pgTable('push_subscriptions', {

@@ -10,6 +10,9 @@ services:
     env_file: ./backend/.env
     environment:
       ALLOW_DEV_AUTH: "0"   # прод: dev-вход выключен жёстко
+    # Только loopback 158 — для SSH-туннеля релея (89→158). Наружу НЕ публикуется.
+    ports:
+      - "127.0.0.1:8081:8081"
     networks: [default]
 
   frontend:
