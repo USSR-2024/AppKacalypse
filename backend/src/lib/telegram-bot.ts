@@ -1,5 +1,7 @@
 import { and, eq } from "drizzle-orm";
+import { randomBytes } from "node:crypto";
 import { db, schema } from "../db/index.js";
+import { findOrCreateUser } from "./users.js";
 import { logActivity } from "./activity.js";
 import {
   gatewayExtract,
@@ -24,8 +26,8 @@ function fmtDate(d: string | Date, tz: string): string {
  * Кладёт сообщение в очередь tg_outbox. Сам бэк (РФ) до api.telegram.org не достучится —
  * исходящие забирает и шлёт релей вне РФ (см. /api/telegram/outbox).
  */
-export async function sendMessage(chatId: number | string, text: string): Promise<void> {
-  await db.insert(schema.tgOutbox).values({ chatId: String(chatId), body: text }).catch(() => {});
+export async function sendMessage(chatId: number | string, text: string, markup?: unknown): Promise<void> {
+  await db.insert(schema.tgOutbox).values({ chatId: String(chatId), body: text, markup: markup ?? null }).catch(() => {});
 }
 
 export function formatTaskList(tasks: TaskRow[], tz: string): string {
@@ -38,12 +40,90 @@ export function formatTaskList(tasks: TaskRow[], tz: string): string {
     .join("\n");
 }
 
+interface TgFrom {
+  id: number;
+  first_name?: string;
+  last_name?: string;
+  username?: string;
+}
 interface TgUpdate {
   message?: {
     text?: string;
     chat: { id: number };
-    from?: { id: number };
+    from?: TgFrom;
   };
+}
+
+// ── Кнопки меню ───────────────────────────────────────────────────────────────
+const BTN = {
+  newTask: "📝 Новая задача",
+  today: "📋 Дела на сегодня",
+  open: "🔓 Открыть приложение",
+  settings: "⚙️ Настройки",
+  back: "⬅️ Назад",
+};
+
+const mainKeyboard = {
+  keyboard: [
+    [{ text: BTN.newTask }, { text: BTN.today }],
+    [{ text: BTN.open }, { text: BTN.settings }],
+  ],
+  resize_keyboard: true,
+};
+
+function settingsKeyboard(morning: boolean, evening: boolean) {
+  const s = (b: boolean) => (b ? "вкл ✅" : "выкл ❌");
+  return {
+    keyboard: [
+      [{ text: `🌅 Утренний дайджест: ${s(morning)}` }],
+      [{ text: `🌙 Вечерний дайджест: ${s(evening)}` }],
+      [{ text: BTN.back }],
+    ],
+    resize_keyboard: true,
+  };
+}
+
+function tgName(from: TgFrom): string {
+  return [from.first_name, from.last_name].filter(Boolean).join(" ") || from.username || "User";
+}
+
+/** Создаёт уже подтверждённый код входа и возвращает ссылку для кнопки «Открыть приложение». */
+async function createLoginLink(userId: string): Promise<string> {
+  const code = randomBytes(18).toString("base64url");
+  await db.insert(schema.botLoginCodes).values({
+    code, userId, status: "claimed", expiresAt: new Date(Date.now() + 5 * 60_000),
+  });
+  return `${APP_URL}/auth?code=${code}`;
+}
+
+/** Подтверждает код входа со страницы (status pending → claimed). */
+async function claimLoginCode(code: string, userId: string): Promise<boolean> {
+  const [row] = await db.select().from(schema.botLoginCodes).where(eq(schema.botLoginCodes.code, code)).limit(1);
+  if (!row || row.status !== "pending" || row.expiresAt.getTime() < Date.now()) return false;
+  await db.update(schema.botLoginCodes).set({ status: "claimed", userId }).where(eq(schema.botLoginCodes.code, code));
+  return true;
+}
+
+async function sendSettings(chatId: number, userId: string): Promise<void> {
+  const [u] = await db
+    .select({
+      notifyMorning: schema.users.notifyMorning,
+      notifyEvening: schema.users.notifyEvening,
+      morningTime: schema.users.morningTime,
+      eveningTime: schema.users.eveningTime,
+      timezone: schema.users.timezone,
+    })
+    .from(schema.users)
+    .where(eq(schema.users.id, userId))
+    .limit(1);
+  if (!u) return;
+  const txt =
+    `⚙️ <b>Настройки</b>\n\n` +
+    `🌅 Утренний дайджест в ${u.morningTime} — ${u.notifyMorning ? "вкл" : "выкл"}\n` +
+    `🌙 Вечерний дайджест в ${u.eveningTime} — ${u.notifyEvening ? "вкл" : "выкл"}\n` +
+    `🌍 Часовой пояс: ${esc(u.timezone)}\n\n` +
+    `Жми кнопки, чтобы включить/выключить. Время и пояс меняются в приложении (Профиль).`;
+  await sendMessage(chatId, txt, settingsKeyboard(u.notifyMorning, u.notifyEvening));
 }
 
 /** Главный обработчик входящего апдейта от Telegram. */
@@ -54,6 +134,34 @@ export async function processUpdate(update: TgUpdate): Promise<void> {
   const tgId = String(msg.from.id);
   const text = msg.text.trim();
 
+  // ── /start [payload] — регистрация (открытая) + подтверждение входа ──────────
+  if (text === "/start" || text.startsWith("/start ")) {
+    const payload = text.slice("/start".length).trim();
+    const u = await findOrCreateUser("telegram", tgId, tgName(msg.from), undefined, {
+      username: msg.from.username ?? null,
+    });
+    await db.delete(schema.botSessions).where(eq(schema.botSessions.telegramId, tgId));
+
+    if (payload.startsWith("login_")) {
+      const ok = await claimLoginCode(payload.slice("login_".length), u.id);
+      await sendMessage(
+        chatId,
+        ok
+          ? "✅ Вход подтверждён! Возвращайся в приложение — оно откроется само."
+          : "Ссылка для входа устарела. Открой приложение и нажми «Войти через бота» заново.",
+        mainKeyboard,
+      );
+      return;
+    }
+    const [info] = await db.select({ displayName: schema.users.displayName }).from(schema.users).where(eq(schema.users.id, u.id)).limit(1);
+    await sendMessage(
+      chatId,
+      `Привет, ${esc(info?.displayName ?? "")}! 👋\n\nЯ AI-диспетчер задач. Пиши задачи обычным языком — «завтра Ивану проверить VPN к 15:00» — или жми кнопки ниже.`,
+      mainKeyboard,
+    );
+    return;
+  }
+
   // Идентификация пользователя по Telegram-identity
   const [ident] = await db
     .select({ userId: schema.authIdentities.userId })
@@ -62,7 +170,7 @@ export async function processUpdate(update: TgUpdate): Promise<void> {
     .limit(1);
 
   if (!ident) {
-    await sendMessage(chatId, `Я тебя пока не знаю. Зайди в приложение ${APP_URL} и войди через Telegram — тогда смогу ставить твои задачи.`);
+    await sendMessage(chatId, "Нажми /start, чтобы начать.");
     return;
   }
   const [user] = await db
@@ -73,9 +181,49 @@ export async function processUpdate(update: TgUpdate): Promise<void> {
   if (!user) return;
   const tz = user.timezone;
 
-  if (text === "/start") {
+  // ── Кнопки меню (перехват до отправки в модель) ──────────────────────────────
+  if (text === BTN.newTask) {
     await db.delete(schema.botSessions).where(eq(schema.botSessions.telegramId, tgId));
-    await sendMessage(chatId, `Привет, ${esc(user.displayName)}! 👋\nПиши задачи обычным языком — «завтра Ивану проверить VPN к 15:00». Я создам задачу.\nИли спроси: «какие у меня задачи на сегодня».`);
+    await sendMessage(chatId, "Опиши задачу одним сообщением 👇 — например «завтра в 15:00 позвонить Ивану».");
+    return;
+  }
+  if (text === BTN.today) {
+    await db.delete(schema.botSessions).where(eq(schema.botSessions.telegramId, tgId));
+    const resolvers = await loadResolvers(user.id, user.displayName);
+    const tasks = await runTaskQuery(user.id, { scope: "today" }, resolvers);
+    const head = queryAnswer("today", tasks.length);
+    await sendMessage(chatId, tasks.length ? `${head}\n${formatTaskList(tasks, tz)}` : head);
+    return;
+  }
+  if (text === BTN.open) {
+    const link = await createLoginLink(user.id);
+    await sendMessage(chatId, "Открой приложение — вход уже подтверждён 👇", {
+      inline_keyboard: [[{ text: "Открыть AppKacalypse", url: link }]],
+    });
+    return;
+  }
+  if (text === BTN.settings) {
+    await sendSettings(chatId, user.id);
+    return;
+  }
+  if (text === BTN.back) {
+    await sendMessage(chatId, "Главное меню 👇", mainKeyboard);
+    return;
+  }
+  if (text.startsWith("🌅 Утренний") || text.startsWith("🌙 Вечерний")) {
+    const morning = text.startsWith("🌅");
+    const [cur] = await db
+      .select({ m: schema.users.notifyMorning, e: schema.users.notifyEvening })
+      .from(schema.users)
+      .where(eq(schema.users.id, user.id))
+      .limit(1);
+    if (cur) {
+      await db
+        .update(schema.users)
+        .set(morning ? { notifyMorning: !cur.m } : { notifyEvening: !cur.e })
+        .where(eq(schema.users.id, user.id));
+    }
+    await sendSettings(chatId, user.id);
     return;
   }
 

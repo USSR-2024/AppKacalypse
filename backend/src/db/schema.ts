@@ -173,11 +173,25 @@ export const tgOutbox = pgTable('tg_outbox', {
   id: uuid('id').primaryKey().defaultRandom(),
   chatId: text('chat_id').notNull(),
   body: text('body').notNull(),
+  markup: jsonb('markup'),                          // reply_markup для Telegram (кнопки), null = без кнопок
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   sentAt: timestamp('sent_at', { withTimezone: true }),
 }, (t) => ({
   pendingIdx: index('tg_outbox_pending_idx').on(t.createdAt),
 }));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// bot_login_codes — одноразовые коды входа через Telegram-бота (обход блокировки
+// веб-виджета в РФ). Веб выдаёт код → бот подтверждает (status=claimed, userId) →
+// веб меняет код на JWT (status=consumed).
+// ─────────────────────────────────────────────────────────────────────────────
+export const botLoginCodes = pgTable('bot_login_codes', {
+  code: text('code').primaryKey(),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  status: text('status').notNull().default('pending'),  // pending | claimed | consumed
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // push_subscriptions — Web Push (PWA). Один user → много устройств.

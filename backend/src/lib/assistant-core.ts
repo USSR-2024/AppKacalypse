@@ -6,6 +6,20 @@ import type { InferSelectModel } from "drizzle-orm";
 const t = schema.tasks;
 export const SELF = ["я", "мне", "себе", "меня", "me", "self"];
 
+const norm = (s: string): string => s.toLowerCase().replace(/ё/g, "е").trim();
+const nameTokens = (s: string): string[] => norm(s).split(/\s+/).filter(Boolean);
+
+// Совпадение слов с учётом русских падежных окончаний: общий префикс
+// покрывает почти всё более короткое слово (хвост ≤ окончание). «бондарев»~«бондареву».
+function wordSim(a: string, b: string): boolean {
+  if (a === b) return true;
+  const min = Math.min(a.length, b.length);
+  if (min < 3) return false;
+  let i = 0;
+  while (i < min && a[i] === b[i]) i++;
+  return i >= min - 2 && i >= 3;
+}
+
 export type TaskRow = InferSelectModel<typeof schema.tasks>;
 
 export interface GatewayQuery {
@@ -64,10 +78,21 @@ export async function loadResolvers(meId?: string, meName?: string): Promise<Res
   };
   const resolveAssignee = (name?: string | null): string | null => {
     if (!name) return null;
-    const n = name.toLowerCase().trim();
-    if (SELF.includes(n) || (meName && n === meName.toLowerCase())) return meId ?? null;
-    const usr = users.find((x) => x.displayName.toLowerCase() === n) || users.find((x) => x.displayName.toLowerCase().includes(n) || n.includes(x.displayName.toLowerCase()));
-    return usr?.id ?? null;
+    const n = norm(name);
+    if (SELF.includes(n) || (meName && n === norm(meName))) return meId ?? null;
+    const exact = users.find((x) => norm(x.displayName) === n);
+    if (exact) return exact.id;
+    // Падежи: «поставь Александру Бондареву» → ищем «Александр Бондарев».
+    // Каждый токен запроса должен совпасть (с учётом окончаний) с токеном имени.
+    const qt = nameTokens(name);
+    if (!qt.length) return null;
+    let best: { id: string; score: number } | null = null;
+    for (const u of users) {
+      const ut = nameTokens(u.displayName);
+      const score = qt.reduce((s, q) => s + (ut.some((w) => wordSim(q, w)) ? 1 : 0), 0);
+      if (score === qt.length && (!best || score > best.score)) best = { id: u.id, score };
+    }
+    return best?.id ?? null;
   };
   return { resolveProject, resolveAssignee };
 }

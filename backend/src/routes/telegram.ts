@@ -27,8 +27,8 @@ telegramRoutes.get("/outbox", async (c) => {
   if (!authed(c)) return c.json({ ok: false }, 401);
   const rows = await db
     .delete(schema.tgOutbox)
-    .returning({ chatId: schema.tgOutbox.chatId, body: schema.tgOutbox.body, createdAt: schema.tgOutbox.createdAt });
+    .returning({ chatId: schema.tgOutbox.chatId, body: schema.tgOutbox.body, markup: schema.tgOutbox.markup, createdAt: schema.tgOutbox.createdAt });
   rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-  const messages = rows.map(({ chatId, body }) => ({ chatId, body }));
+  const messages = rows.map(({ chatId, body, markup }) => ({ chatId, body, markup }));
   return c.json({ messages });
 });

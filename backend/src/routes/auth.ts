@@ -1,39 +1,14 @@
 import { Hono } from 'hono';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { randomBytes } from 'node:crypto';
 import { db, schema } from '../db/index.js';
 import { signSession } from '../lib/jwt.js';
 import { verifyTelegramLogin } from '../lib/telegram.js';
+import { findOrCreateUser } from '../lib/users.js';
 import { env } from '../lib/env.js';
 
 export const authRoutes = new Hono();
-
-// Найти existing identity или создать пользователя + identity.
-async function findOrCreateUser(provider: 'telegram' | 'email', externalId: string, displayName: string, avatarUrl?: string, meta: Record<string, unknown> = {}) {
-  return db.transaction(async (tx) => {
-    const existing = await tx
-      .select({ id: schema.users.id, role: schema.users.role })
-      .from(schema.authIdentities)
-      .innerJoin(schema.users, eq(schema.users.id, schema.authIdentities.userId))
-      .where(and(
-        eq(schema.authIdentities.provider, provider),
-        eq(schema.authIdentities.externalId, externalId),
-      ))
-      .limit(1);
-    if (existing[0]) return existing[0];
-
-    // Первый зарегистрировавшийся = owner.
-    const anyUser = await tx.select({ id: schema.users.id }).from(schema.users).limit(1);
-    const role = anyUser.length ? 'member' : 'owner';
-
-    const [created] = await tx
-      .insert(schema.users)
-      .values({ displayName, role, avatarUrl })
-      .returning({ id: schema.users.id, role: schema.users.role });
-    await tx.insert(schema.authIdentities).values({ userId: created!.id, provider, externalId, meta });
-    return created!;
-  });
-}
 
 const telegramSchema = z.object({
   id: z.number(),
@@ -77,4 +52,35 @@ authRoutes.post('/dev', async (c) => {
   const user = await findOrCreateUser('telegram', externalId, displayName);
   const token = await signSession({ sub: user.id, role: user.role });
   return c.json({ token, dev: true });
+});
+
+// ── Вход через бота (обход блокировки веб-виджета в РФ) ────────────────────────
+const CODE_TTL_MS = 5 * 60_000;
+
+/** POST /api/auth/bot/start — веб запрашивает одноразовый код. Открывает t.me/<bot>?start=login_<code>. */
+authRoutes.post('/bot/start', async (c) => {
+  const code = randomBytes(18).toString('base64url');
+  await db.insert(schema.botLoginCodes).values({ code, expiresAt: new Date(Date.now() + CODE_TTL_MS) });
+  return c.json({ code });
+});
+
+/** POST /api/auth/bot/exchange — веб меняет код на JWT (поллит, пока бот не подтвердит). */
+authRoutes.post('/bot/exchange', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const parsed = z.object({ code: z.string().min(1).max(128) }).safeParse(body);
+  if (!parsed.success) return c.json({ error: 'bad_request' }, 400);
+
+  const [row] = await db.select().from(schema.botLoginCodes).where(eq(schema.botLoginCodes.code, parsed.data.code)).limit(1);
+  if (!row || row.expiresAt.getTime() < Date.now()) {
+    if (row) await db.delete(schema.botLoginCodes).where(eq(schema.botLoginCodes.code, row.code));
+    return c.json({ error: 'expired' }, 410);
+  }
+  if (row.status === 'consumed') return c.json({ error: 'expired' }, 410);
+  if (row.status !== 'claimed' || !row.userId) return c.json({ status: 'pending' });
+
+  const [user] = await db.select({ id: schema.users.id, role: schema.users.role }).from(schema.users).where(eq(schema.users.id, row.userId)).limit(1);
+  if (!user) return c.json({ error: 'expired' }, 410);
+  await db.delete(schema.botLoginCodes).where(eq(schema.botLoginCodes.code, row.code));
+  const token = await signSession({ sub: user.id, role: user.role });
+  return c.json({ token });
 });
