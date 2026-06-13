@@ -6,6 +6,10 @@ export const metadata: Metadata = {
   description: "AI-диспетчер задач",
   manifest: "/manifest.webmanifest",
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "AppKacalypse" },
+  icons: {
+    icon: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }],
+    apple: "/apple-touch-icon.png",
+  },
 };
 
 export const viewport: Viewport = {
