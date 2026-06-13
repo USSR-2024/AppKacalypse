@@ -5,6 +5,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import { useAuth } from "@/lib/store";
 import { fetcher } from "@/lib/api";
+import { Avatar } from "@/components/Avatar";
 import { BottomNav } from "@/components/BottomNav";
 import { TaskComposer } from "@/components/TaskComposer";
 import type { Me } from "@/lib/types";
@@ -32,16 +33,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col">
-      <Link
-        href="/profile"
-        className="fixed right-4 top-4 z-30 flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-surface text-sm"
-        aria-label="Профиль"
-      >
-        {me?.avatarUrl ? (
-          <img src={me.avatarUrl} alt="" className="h-full w-full object-cover" />
-        ) : (
-          <span>{me?.displayName?.slice(0, 1) ?? "·"}</span>
-        )}
+      <Link href="/profile" className="fixed right-4 top-4 z-30" aria-label="Профиль">
+        <Avatar src={me?.avatarUrl} name={me?.displayName} className="h-9 w-9 bg-surface text-sm" />
       </Link>
 
       <div className="flex-1 pb-24">{children}</div>

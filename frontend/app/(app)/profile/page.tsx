@@ -4,6 +4,7 @@ import Link from "next/link";
 import { mutate } from "swr";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/store";
+import { Avatar } from "@/components/Avatar";
 import type { Me } from "@/lib/types";
 
 const CHANNELS = [
@@ -40,13 +41,7 @@ export default function ProfilePage() {
   return (
     <main className="px-4 pt-12">
       <header className="mb-6 flex items-center gap-3">
-        {draft.avatarUrl ? (
-          <img src={draft.avatarUrl} alt="" className="h-14 w-14 rounded-full" />
-        ) : (
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-accent text-xl text-white">
-            {draft.displayName.slice(0, 1)}
-          </div>
-        )}
+        <Avatar src={draft.avatarUrl} name={draft.displayName} className="h-14 w-14 bg-accent text-xl text-white" />
         <div>
           <h1 className="text-xl font-semibold">{draft.displayName}</h1>
           <p className="text-sm text-muted">{draft.role === "owner" ? "Владелец" : draft.role === "admin" ? "Админ" : "Участник"}</p>
