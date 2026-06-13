@@ -13,6 +13,9 @@
 - create_calendar_event — встреча/созвон/событие с датой и временем.
 - create_task_with_calendar_event — и встреча, и задача.
 - save_note — заметка без действия.
+- query_tasks — ВОПРОС о существующих задачах (не команда создать). Примеры:
+  «какие у меня задачи на сегодня», «что важного», «что по проекту VPN»,
+  «какие задачи на Иване», «что просрочено», «покажи задачи на неделю».
 - no_action — нет задачи/события.
 
 # Правила
@@ -37,6 +40,7 @@
      "constraints": [], "confidence": 0.0, "needs_confirmation": true}
   ],
   "calendar_event": null,
+  "query": null,
   "note": null,
   "questions": []
 }
@@ -45,3 +49,15 @@
 (title, start_text, start_iso, end_iso, timezone, participants, calendar,
 location, meeting_url, linked_task_required, confidence, needs_confirmation),
 а "tasks" оставляй пустым (кроме create_task_with_calendar_event).
+
+Для intent=query_tasks заполни "query" и оставь "tasks" пустым:
+{
+  "scope": "today|overdue|week|important|all",   // период/набор; по умолчанию "all"
+  "assignee": null,        // "me" если про себя («мои задачи»), имя если про другого, иначе null
+  "project": null,         // имя проекта, если в вопросе указан, иначе null
+  "important_only": false, // true если спрашивают именно про важные
+  "include_done": false    // true если просят показать и выполненные
+}
+Примеры: «что у меня на сегодня» → scope=today, assignee="me".
+«что важного по VPN» → scope=important, important_only=true, project="VPN".
+«что на Иване» → assignee="Иван". «что просрочено» → scope=overdue, assignee="me".

@@ -17,6 +17,19 @@ class MockProvider(LLMProvider):
         if not low or any(w in low for w in ("спасибо", "ок", "понятно")):
             return {"intent": "no_action", "questions": []}
 
+        if any(w in low for w in ("какие задач", "мои задачи", "что по проект", "что на ", "что важн", "что просрочен", "покажи задач")):
+            return {
+                "intent": "query_tasks",
+                "query": {
+                    "scope": "today" if "сегодня" in low else ("overdue" if "просрочен" in low else "all"),
+                    "assignee": "me",
+                    "project": None,
+                    "important_only": "важн" in low,
+                    "include_done": False,
+                },
+                "questions": [],
+            }
+
         if any(w in low for w in ("созвон", "встреч", "совещан", "в ", ":00")) and any(
             w in low for w in (":", "час", "утра", "вечера", "00")
         ):

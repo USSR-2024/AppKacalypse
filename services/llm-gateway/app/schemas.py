@@ -15,6 +15,7 @@ class Intent(str, Enum):
     create_calendar_event = "create_calendar_event"
     create_task_with_calendar_event = "create_task_with_calendar_event"
     save_note = "save_note"
+    query_tasks = "query_tasks"
     no_action = "no_action"
 
 
@@ -55,6 +56,15 @@ class CalendarEvent(BaseModel):
     needs_confirmation: bool = True
 
 
+class TaskQuery(BaseModel):
+    """Фильтр для intent=query_tasks (вопрос о существующих задачах)."""
+    scope: str = "all"                 # today | overdue | week | important | all
+    assignee: Optional[str] = None     # имя | "me" (про себя) | null
+    project: Optional[str] = None      # имя проекта | null
+    important_only: bool = False
+    include_done: bool = False         # включать выполненные
+
+
 class ExtractRequest(BaseModel):
     text: str
     source: str = "telegram"          # telegram | email | webhook
@@ -67,6 +77,7 @@ class ExtractResult(BaseModel):
     intent: Intent
     tasks: List[Task] = Field(default_factory=list)
     calendar_event: Optional[CalendarEvent] = None
+    query: Optional[TaskQuery] = None
     note: Optional[str] = None
     questions: List[str] = Field(default_factory=list)
     needs_confirmation: bool = True

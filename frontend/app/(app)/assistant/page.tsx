@@ -2,13 +2,17 @@
 import { useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { DraftCard, type Draft } from "@/components/DraftCard";
+import { TaskItem } from "@/components/TaskItem";
+import type { Task } from "@/lib/types";
 
 interface ExtractResponse {
   intent: string;
-  note: string | null;
-  questions: string[];
-  needsConfirmation: boolean;
+  note?: string | null;
+  questions?: string[];
+  needsConfirmation?: boolean;
   drafts: Draft[];
+  tasks?: Task[];
+  answer?: string;
   reply?: string;
 }
 
@@ -17,6 +21,7 @@ interface Msg {
   role: "user" | "assistant";
   text?: string;
   drafts?: Draft[];
+  tasks?: Task[];
 }
 
 let counter = 0;
@@ -36,6 +41,7 @@ export default function AssistantPage() {
 
   function buildReply(r: ExtractResponse): string {
     if (r.reply) return r.reply;
+    if (r.intent === "query_tasks") return r.answer ?? "Готово.";
     const parts: string[] = [];
     if (r.drafts.length) parts.push(r.drafts.length > 1 ? `Понял ${r.drafts.length} задачи:` : "Вот задача — проверь и создай:");
     else if (r.note) parts.push(`📝 Заметка: ${r.note}`);
@@ -54,7 +60,7 @@ export default function AssistantPage() {
     try {
       const r = await api<ExtractResponse>("/assistant/extract", { method: "POST", body: JSON.stringify({ text: t }) });
       setMessages((prev) => prev.slice(0, -1));
-      push({ role: "assistant", text: buildReply(r), drafts: r.drafts });
+      push({ role: "assistant", text: buildReply(r), drafts: r.drafts, tasks: r.tasks });
     } catch {
       setMessages((prev) => prev.slice(0, -1));
       push({ role: "assistant", text: "Ошибка связи. Попробуй ещё раз." });
@@ -80,6 +86,11 @@ export default function AssistantPage() {
                 </div>
               )}
               {m.drafts?.map((d, i) => <DraftCard key={i} draft={d} />)}
+              {m.tasks && m.tasks.length > 0 && (
+                <div className="mt-2 flex flex-col gap-2">
+                  {m.tasks.map((task) => <TaskItem key={task.id} task={task} />)}
+                </div>
+              )}
             </div>
           </div>
         ))}
