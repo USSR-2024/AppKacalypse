@@ -77,11 +77,21 @@ class TaskQuery(_DropNulls):
     include_done: bool = False         # включать выполненные
 
 
+class PrevDraft(BaseModel):
+    """Предыдущий предложенный черновик — для уточнения короткой репликой."""
+    title: Optional[str] = None
+    project: Optional[str] = None
+    assignee: Optional[str] = None
+    due_text: Optional[str] = None
+    priority: Optional[str] = None
+
+
 class ExtractRequest(BaseModel):
     text: str
     source: str = "telegram"          # telegram | email | webhook
     author: Optional[str] = None      # имя/алиас автора (для «мне/себе»)
     now_iso: Optional[str] = None     # текущее время от n8n; иначе берём серверное
+    prev: Optional[PrevDraft] = None  # черновик из прошлого хода (контекст уточнения)
 
 
 class ExtractResult(_DropNulls):

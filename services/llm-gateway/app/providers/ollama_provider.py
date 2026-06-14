@@ -26,6 +26,19 @@ class OllamaProvider(LLMProvider):
         self.user_template = _load("task_extraction_user_template.md")
         self.announce_system = _load("announce_system.md")
 
+    def _build_prev(self, req: ExtractRequest) -> str:
+        p = req.prev
+        if not p:
+            return ""
+        fields = [
+            ("title", p.title), ("project", p.project), ("assignee", p.assignee),
+            ("due_text", p.due_text), ("priority", p.priority),
+        ]
+        lines = [f"- {k}: {v}" for k, v in fields if v]
+        if not lines:
+            return ""
+        return "Текущий черновик задачи (применяй правки из сообщения к нему):\n" + "\n".join(lines) + "\n"
+
     def _build_user(self, req: ExtractRequest, now_iso: str) -> str:
         return (
             self.user_template
@@ -34,6 +47,7 @@ class OllamaProvider(LLMProvider):
             .replace("{{AUTHOR}}", req.author or "автор")
             .replace("{{SOURCE}}", req.source)
             .replace("{{TEXT}}", req.text)
+            .replace("{{PREV}}", self._build_prev(req))
         )
 
     async def extract(self, req: ExtractRequest, now_iso: str) -> dict:

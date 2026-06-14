@@ -32,6 +32,8 @@ export default function AssistantPage() {
   ]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  // Последний предложенный черновик — контекст для уточнения следующей репликой.
+  const [pending, setPending] = useState<Draft | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   function push(m: Omit<Msg, "id">) {
@@ -57,10 +59,15 @@ export default function AssistantPage() {
     push({ role: "user", text: t });
     setBusy(true);
     push({ role: "assistant", text: "…" });
+    const prev = pending
+      ? { title: pending.title, project: pending.projectName, assignee: pending.assigneeName, due_text: pending.dueText, priority: pending.priority }
+      : undefined;
     try {
-      const r = await api<ExtractResponse>("/assistant/extract", { method: "POST", body: JSON.stringify({ text: t }) });
+      const r = await api<ExtractResponse>("/assistant/extract", { method: "POST", body: JSON.stringify({ text: t, prev }) });
       setMessages((prev) => prev.slice(0, -1));
       push({ role: "assistant", text: buildReply(r), drafts: r.drafts, tasks: r.tasks });
+      // Уточнять можно только одиночный черновик; иначе сбрасываем контекст.
+      setPending(r.drafts.length === 1 ? r.drafts[0] : null);
     } catch {
       setMessages((prev) => prev.slice(0, -1));
       push({ role: "assistant", text: "Ошибка связи. Попробуй ещё раз." });
@@ -85,7 +92,7 @@ export default function AssistantPage() {
                   {m.text}
                 </div>
               )}
-              {m.drafts?.map((d, i) => <DraftCard key={i} draft={d} />)}
+              {m.drafts?.map((d, i) => <DraftCard key={i} draft={d} onCreated={() => setPending(null)} />)}
               {m.tasks && m.tasks.length > 0 && (
                 <div className="mt-2 flex flex-col gap-2">
                   {m.tasks.map((task) => <TaskItem key={task.id} task={task} />)}

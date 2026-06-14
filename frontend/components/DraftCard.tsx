@@ -31,7 +31,7 @@ function toLocal(iso: string): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-export function DraftCard({ draft }: { draft: Draft }) {
+export function DraftCard({ draft, onCreated }: { draft: Draft; onCreated?: () => void }) {
   const { data: projects } = useProjects();
   const { data: users } = useUsers();
   const [title, setTitle] = useState(draft.title);
@@ -67,6 +67,7 @@ export function DraftCard({ draft }: { draft: Draft }) {
       });
       refreshTasks();
       setCreated(true);
+      onCreated?.();
     } finally {
       setBusy(false);
     }

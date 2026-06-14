@@ -10,7 +10,21 @@ assistantRoutes.use("*", requireAuth);
 
 assistantRoutes.post("/extract", async (c) => {
   const u = c.get("user");
-  const parsed = z.object({ text: z.string().min(1).max(2000) }).safeParse(await c.req.json().catch(() => null));
+  const parsed = z
+    .object({
+      text: z.string().min(1).max(2000),
+      prev: z
+        .object({
+          title: z.string().optional(),
+          project: z.string().nullable().optional(),
+          assignee: z.string().nullable().optional(),
+          due_text: z.string().nullable().optional(),
+          priority: z.string().optional(),
+        })
+        .nullable()
+        .optional(),
+    })
+    .safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "bad_request" }, 400);
 
   const [me] = await db
@@ -21,7 +35,7 @@ assistantRoutes.post("/extract", async (c) => {
 
   let result;
   try {
-    result = await gatewayExtract(parsed.data.text, me?.displayName);
+    result = await gatewayExtract(parsed.data.text, me?.displayName, parsed.data.prev ?? null);
   } catch {
     return c.json({ intent: "error", drafts: [], tasks: [], questions: [], note: null, reply: "Модель сейчас недоступна — попробуй ещё раз через минуту." });
   }

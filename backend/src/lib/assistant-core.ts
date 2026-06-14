@@ -46,12 +46,20 @@ export function mapPriority(p?: string): "low" | "normal" | "high" {
   return "normal";
 }
 
+export interface PrevDraft {
+  title?: string;
+  project?: string | null;
+  assignee?: string | null;
+  due_text?: string | null;
+  priority?: string;
+}
+
 /** Вызов LLM Gateway. Бросает при недоступности. */
-export async function gatewayExtract(text: string, author?: string): Promise<GatewayResult> {
+export async function gatewayExtract(text: string, author?: string, prev?: PrevDraft | null): Promise<GatewayResult> {
   const res = await fetch(`${env.GATEWAY_URL}/extract`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ text, source: "app", author, now_iso: new Date().toISOString() }),
+    body: JSON.stringify({ text, source: "app", author, now_iso: new Date().toISOString(), prev: prev ?? null }),
     signal: AbortSignal.timeout(60000),
   });
   if (!res.ok) throw new Error(`gateway ${res.status}`);
