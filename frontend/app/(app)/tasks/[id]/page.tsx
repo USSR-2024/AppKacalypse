@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { refreshTasks, useProjects, useUsers, useTask } from "@/lib/hooks";
 import { SheetSelect, type Opt } from "@/components/SheetSelect";
 import { AssigneePicker, splitAssignees } from "@/components/AssigneePicker";
+import { KindToggle } from "@/components/KindToggle";
 import { toLocalInput, STATUS_LABELS, PRIORITY_LABELS } from "@/lib/format";
 import type { Priority, TaskStatus } from "@/lib/types";
 
@@ -24,6 +25,7 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [kind, setKind] = useState<"personal" | "work">("personal");
   const [projectId, setProjectId] = useState("");
   const [userIds, setUserIds] = useState<string[]>([]);
   const [externals, setExternals] = useState<string[]>([]);
@@ -39,6 +41,7 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
     setTitle(task.title);
     setDescription(task.description);
     setProjectId(task.projectId ?? "");
+    setKind(task.projectId ? "work" : "personal");
     const { userIds: uids, externals: exts } = splitAssignees(task.assignees ?? []);
     setUserIds(uids);
     setExternals(exts);
@@ -108,7 +111,10 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
         />
 
         <SheetSelect title="Статус" placeholder="Статус" value={status} onChange={(v) => setStatus(v as TaskStatus)} options={STATUS_OPTS} allowClear={false} />
-        <SheetSelect title="Проект" placeholder="Без проекта" value={projectId} onChange={setProjectId} options={projectOpts} />
+        <KindToggle kind={kind} onChange={(k) => { setKind(k); if (k === "personal") setProjectId(""); }} />
+        {kind === "work" && (
+          <SheetSelect title="Проект" placeholder="Выберите проект" value={projectId} onChange={setProjectId} options={projectOpts} />
+        )}
         <AssigneePicker users={users ?? []} userIds={userIds} externals={externals} onChange={(u, e) => { setUserIds(u); setExternals(e); }} />
         <SheetSelect title="Контролёр" placeholder="Контролёр — создатель" value={controllerId} onChange={setControllerId} options={userOpts} />
         <label className="flex items-center justify-between gap-2 rounded-xl bg-surface px-3 py-2.5 text-sm">
@@ -131,7 +137,7 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
       </div>
 
       <div className="mt-5 flex gap-2">
-        <button onClick={save} disabled={busy || !title.trim()} className="flex-1 rounded-xl bg-accent py-3 font-medium text-white disabled:opacity-40">
+        <button onClick={save} disabled={busy || !title.trim() || (kind === "work" && !projectId)} className="flex-1 rounded-xl bg-accent py-3 font-medium text-white disabled:opacity-40">
           {busy ? "…" : "Сохранить"}
         </button>
         <button onClick={remove} className="rounded-xl bg-surface px-4 text-danger">Удалить</button>

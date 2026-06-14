@@ -4,6 +4,7 @@ import { api } from "@/lib/api";
 import { refreshTasks, useProjects, useUsers } from "@/lib/hooks";
 import { SheetSelect, type Opt } from "@/components/SheetSelect";
 import { AssigneePicker } from "@/components/AssigneePicker";
+import { KindToggle } from "@/components/KindToggle";
 import { useBackClose } from "@/lib/useBackClose";
 import type { Priority } from "@/lib/types";
 
@@ -17,6 +18,7 @@ export function TaskComposer({ onClose, defaultProjectId }: { onClose: () => voi
   const { data: projects } = useProjects();
   const { data: users } = useUsers();
   const [title, setTitle] = useState("");
+  const [kind, setKind] = useState<"personal" | "work">(defaultProjectId ? "work" : "personal");
   const [projectId, setProjectId] = useState(defaultProjectId ?? "");
   const [userIds, setUserIds] = useState<string[]>([]);
   const [externals, setExternals] = useState<string[]>([]);
@@ -34,6 +36,10 @@ export function TaskComposer({ onClose, defaultProjectId }: { onClose: () => voi
   async function submit() {
     if (!title.trim()) {
       setErr("Введите название задачи");
+      return;
+    }
+    if (kind === "work" && !projectId) {
+      setErr("Выберите проект для рабочей задачи");
       return;
     }
     setBusy(true);
@@ -82,7 +88,10 @@ export function TaskComposer({ onClose, defaultProjectId }: { onClose: () => voi
         />
 
         <div className="mt-4 flex flex-col gap-2">
-          <SheetSelect title="Проект" placeholder="Без проекта" value={projectId} onChange={setProjectId} options={projectOpts} />
+          <KindToggle kind={kind} onChange={(k) => { setKind(k); if (k === "personal") setProjectId(""); if (err) setErr(""); }} />
+          {kind === "work" && (
+            <SheetSelect title="Проект" placeholder="Выберите проект" value={projectId} onChange={setProjectId} options={projectOpts} />
+          )}
           <AssigneePicker users={users ?? []} userIds={userIds} externals={externals} onChange={(u, e) => { setUserIds(u); setExternals(e); }} />
           <SheetSelect title="Контролёр" placeholder="Контролёр — я (создатель)" value={controllerId} onChange={setControllerId} options={userOpts} />
           <label className="flex items-center justify-between gap-2 rounded-xl bg-surface px-3 py-2.5 text-sm">
