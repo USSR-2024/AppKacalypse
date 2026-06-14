@@ -18,9 +18,22 @@ export default function ProfilePage() {
   const logout = useAuth((s) => s.logout);
   const [draft, setDraft] = useState<Me | null>(me);
   const [saved, setSaved] = useState(false);
+  const [first, setFirst] = useState("");
+  const [last, setLast] = useState("");
 
   useEffect(() => setDraft(me), [me]);
+  useEffect(() => {
+    if (!me) return;
+    const parts = me.displayName.trim().split(/\s+/);
+    setFirst(parts[0] ?? "");
+    setLast(parts.slice(1).join(" "));
+  }, [me?.displayName]);
   if (!draft) return <main className="px-4 pt-12 text-muted">Загрузка…</main>;
+
+  function saveName() {
+    const name = `${first.trim()} ${last.trim()}`.trim();
+    if (name && name !== draft!.displayName) patch({ displayName: name });
+  }
 
   async function patch(p: Partial<Me>) {
     const next = { ...draft!, ...p };
@@ -47,6 +60,27 @@ export default function ProfilePage() {
           <p className="text-sm text-muted">{draft.role === "owner" ? "Владелец" : draft.role === "admin" ? "Админ" : "Участник"}</p>
         </div>
       </header>
+
+      <section className="mb-5">
+        <h2 className="mb-2 px-1 text-xs uppercase tracking-wide text-muted">Имя и фамилия</h2>
+        <div className="flex gap-2">
+          <input
+            value={first}
+            onChange={(e) => setFirst(e.target.value)}
+            onBlur={saveName}
+            placeholder="Имя"
+            className="flex-1 rounded-xl bg-surface px-3 py-2.5 text-sm outline-none placeholder:text-muted"
+          />
+          <input
+            value={last}
+            onChange={(e) => setLast(e.target.value)}
+            onBlur={saveName}
+            placeholder="Фамилия"
+            className="flex-1 rounded-xl bg-surface px-3 py-2.5 text-sm outline-none placeholder:text-muted"
+          />
+        </div>
+        <p className="mt-1 px-1 text-xs text-muted">Так вас видят в задачах и при назначении.</p>
+      </section>
 
       <section className="mb-5">
         <h2 className="mb-2 px-1 text-xs uppercase tracking-wide text-muted">Напоминания</h2>

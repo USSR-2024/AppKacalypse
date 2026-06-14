@@ -1,37 +1,47 @@
 "use client";
+import { useState } from "react";
 import { api } from "@/lib/api";
-import { refreshTasks, useProjects, useTasks } from "@/lib/hooks";
+import { refreshTasks, useProjects, useTasks, useUsers } from "@/lib/hooks";
 import { TaskItem } from "@/components/TaskItem";
+import { SheetSelect, type Opt } from "@/components/SheetSelect";
 import type { Task } from "@/lib/types";
 
 function TriageRow({ task }: { task: Task }) {
   const { data: projects } = useProjects();
+  const { data: users } = useUsers();
+  const [assignee, setAssignee] = useState(task.assignees?.[0]?.userId ?? "");
+  const [busy, setBusy] = useState(false);
 
-  async function toProject(projectId: string) {
-    await api(`/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify({ projectId, isTriaged: true }) });
-    refreshTasks();
-  }
-  async function asPersonal() {
-    await api(`/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify({ isTriaged: true }) });
-    refreshTasks();
+  const projectOpts: Opt[] = (projects ?? []).map((p) => ({ value: p.id, label: p.name, color: p.color || "#4f8cff" }));
+  const userOpts: Opt[] = (users ?? []).map((u) => ({ value: u.id, label: u.displayName, avatar: u.avatarUrl }));
+
+  // Разобрать: задать проект (или личная) + исполнителя → ушла из «Входящих».
+  async function triage(projectId: string | null) {
+    setBusy(true);
+    try {
+      await api(`/tasks/${task.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ projectId, assigneeIds: assignee ? [assignee] : [], isTriaged: true }),
+      });
+      refreshTasks();
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className={`flex flex-col gap-2 ${busy ? "opacity-50" : ""}`}>
       <TaskItem task={task} />
-      <div className="flex flex-wrap items-center gap-2 px-1 pb-1">
-        <span className="text-xs text-muted">Куда:</span>
-        <select
-          defaultValue=""
-          onChange={(e) => e.target.value && toProject(e.target.value)}
-          className="rounded-lg bg-surface-2 px-2 py-1 text-xs text-text"
-        >
-          <option value="" disabled>В проект…</option>
-          {projects?.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-        <button onClick={asPersonal} className="rounded-lg bg-surface-2 px-2 py-1 text-xs text-muted">
-          Личная
-        </button>
+      <div className="flex flex-col gap-2 rounded-2xl bg-surface-2/50 p-2">
+        <SheetSelect title="Исполнитель" placeholder="Исполнитель (необязательно)" value={assignee} onChange={setAssignee} options={userOpts} />
+        <div className="flex gap-2">
+          <div className="flex-1">
+            <SheetSelect title="В проект" placeholder="📁 В проект…" value="" onChange={(v) => v && triage(v)} options={projectOpts} allowClear={false} />
+          </div>
+          <button onClick={() => triage(null)} disabled={busy} className="rounded-xl bg-surface px-4 text-sm text-muted disabled:opacity-40">
+            🔒 Личная
+          </button>
+        </div>
       </div>
     </div>
   );
