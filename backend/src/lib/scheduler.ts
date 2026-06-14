@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { sendMessage } from "./telegram-bot.js";
+import { sendPush } from "./push.js";
 import { morningDigest, eveningDigest } from "./digest.js";
 
 // Гард против повторной отправки в ту же минуту/день (key = user:type:date).
@@ -37,26 +38,35 @@ async function tick(): Promise<void> {
 
   for (const u of users) {
     const channels = (u.channels as string[]) ?? [];
-    if (!channels.includes("telegram")) continue; // v1: дайджесты только в Telegram
+    if (!channels.length) continue;
     const now = hhmm(u.tz);
     const dk = dayKey(u.tz);
-    if (u.morning && u.morningTime === now) await deliver(u.id, u.tz, "morning", dk);
-    if (u.evening && u.eveningTime === now) await deliver(u.id, u.tz, "evening", dk);
+    if (u.morning && u.morningTime === now) await deliver(u.id, u.tz, "morning", dk, channels);
+    if (u.evening && u.eveningTime === now) await deliver(u.id, u.tz, "evening", dk, channels);
   }
 }
 
-async function deliver(userId: string, tz: string, type: "morning" | "evening", dk: string): Promise<void> {
+async function deliver(userId: string, tz: string, type: "morning" | "evening", dk: string, channels: string[]): Promise<void> {
   const key = `${userId}:${type}:${dk}`;
   if (sent.has(key)) return;
   sent.add(key);
 
-  const [ident] = await db
-    .select({ externalId: schema.authIdentities.externalId })
-    .from(schema.authIdentities)
-    .where(and(eq(schema.authIdentities.provider, "telegram"), eq(schema.authIdentities.userId, userId)))
-    .limit(1);
-  if (!ident) return;
-
   const text = type === "morning" ? await morningDigest(userId, tz) : await eveningDigest(userId, tz);
-  if (text) await sendMessage(ident.externalId, text);
+  if (!text) return;
+
+  if (channels.includes("telegram")) {
+    const [ident] = await db
+      .select({ externalId: schema.authIdentities.externalId })
+      .from(schema.authIdentities)
+      .where(and(eq(schema.authIdentities.provider, "telegram"), eq(schema.authIdentities.userId, userId)))
+      .limit(1);
+    if (ident) await sendMessage(ident.externalId, text);
+  }
+
+  if (channels.includes("push")) {
+    const title = type === "morning" ? "🌅 Утренний дайджест" : "🌙 Итоги дня";
+    const plain = text.replace(/<[^>]+>/g, "");
+    const body = plain.split("\n").filter(Boolean).slice(1, 4).join(" · ").slice(0, 180) || "Открыть приложение";
+    await sendPush([userId], { title, body, url: "/today" });
+  }
 }

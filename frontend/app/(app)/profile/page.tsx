@@ -4,6 +4,7 @@ import Link from "next/link";
 import { mutate } from "swr";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/store";
+import { enablePush, disablePush, pushSupported } from "@/lib/push";
 import { Avatar } from "@/components/Avatar";
 import type { Me } from "@/lib/types";
 
@@ -45,8 +46,29 @@ export default function ProfilePage() {
     setTimeout(() => setSaved(false), 1200);
   }
 
-  function toggleChannel(key: string) {
+  async function toggleChannel(key: string) {
     const has = draft!.notifyChannels.includes(key);
+
+    // Push требует разрешения браузера + подписки.
+    if (key === "push") {
+      if (!has) {
+        if (!pushSupported()) {
+          alert("Браузер не поддерживает пуш. На iPhone добавьте приложение на экран «Домой» и откройте оттуда.");
+          return;
+        }
+        const ok = await enablePush();
+        if (!ok) {
+          alert("Не удалось включить пуш — проверьте разрешение на уведомления в браузере.");
+          return;
+        }
+        patch({ notifyChannels: [...draft!.notifyChannels, "push"] });
+      } else {
+        await disablePush();
+        patch({ notifyChannels: draft!.notifyChannels.filter((c) => c !== "push") });
+      }
+      return;
+    }
+
     const channels = has ? draft!.notifyChannels.filter((c) => c !== key) : [...draft!.notifyChannels, key];
     patch({ notifyChannels: channels });
   }

@@ -5,6 +5,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import { useAuth } from "@/lib/store";
 import { fetcher } from "@/lib/api";
+import { registerSW } from "@/lib/push";
 import { Avatar } from "@/components/Avatar";
 import { BottomNav } from "@/components/BottomNav";
 import { TaskComposer } from "@/components/TaskComposer";
@@ -23,6 +24,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     if (!token) router.replace("/login");
     else setReady(true);
   }, [token, router]);
+
+  useEffect(() => {
+    registerSW();
+  }, []);
 
   const { data: me } = useSWR<Me>(token ? "/me" : null, fetcher);
   useEffect(() => {

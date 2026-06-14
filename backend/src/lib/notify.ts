@@ -1,6 +1,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { sendMessage } from "./telegram-bot.js";
+import { sendPush } from "./push.js";
 
 const APP_URL = "https://appkacalypse.baassist.ru";
 
@@ -36,4 +37,11 @@ export async function notifyMentions(
   for (const i of idents) {
     await sendMessage(i.externalId, text);
   }
+
+  // Push в приложение (для тех, у кого включён канал push).
+  await sendPush(targets, {
+    title: `💬 ${authorName}`,
+    body: `${taskTitle}: ${snippet}`,
+    url: `/tasks/${taskId}`,
+  });
 }

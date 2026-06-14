@@ -13,6 +13,7 @@ import { teamRoutes } from './routes/teams.js';
 import { userRoutes } from './routes/users.js';
 import { assistantRoutes } from './routes/assistant.js';
 import { telegramRoutes } from './routes/telegram.js';
+import { pushRoutes } from './routes/push.js';
 import { startScheduler } from './lib/scheduler.js';
 
 const app = new Hono();
@@ -29,6 +30,7 @@ app.route('/api/teams', teamRoutes);
 app.route('/api/users', userRoutes);
 app.route('/api/assistant', assistantRoutes);
 app.route('/api/telegram', telegramRoutes);
+app.route('/api/push', pushRoutes);
 
 // Текущий пользователь по JWT.
 app.get('/api/me', requireAuth, async (c) => {
