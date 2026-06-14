@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { useBackClose } from "@/lib/useBackClose";
 
 export interface Opt {
   value: string;
@@ -25,6 +26,7 @@ export function SheetSelect({
 }) {
   const [open, setOpen] = useState(false);
   const sel = options.find((o) => o.value === value);
+  useBackClose(open, () => setOpen(false));
 
   function pick(v: string) {
     onChange(v);

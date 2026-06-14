@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { isPast, isToday } from "date-fns";
 import { useAuth } from "@/lib/store";
 import { useTasks } from "@/lib/hooks";
@@ -35,9 +36,14 @@ export default function TodayPage() {
 
   return (
     <main className="px-4 pt-12">
-      <header className="mb-6">
+      <header className="mb-6 flex items-end justify-between">
+        <div>
         <p className="text-sm text-muted">{me ? `Привет, ${me.displayName}` : " "}</p>
         <h1 className="text-2xl font-semibold">Сегодня</h1>
+        </div>
+        <Link href="/done" className="rounded-xl bg-surface px-3 py-2 text-sm text-muted">
+          ✓ Выполненные
+        </Link>
       </header>
 
       {isLoading ? (

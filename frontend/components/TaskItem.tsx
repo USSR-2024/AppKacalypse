@@ -1,9 +1,11 @@
 "use client";
+import { useState } from "react";
 import Link from "next/link";
 import { format, isPast, isToday } from "date-fns";
 import { ru } from "date-fns/locale";
 import { api } from "@/lib/api";
 import { refreshTasks, useProjects, useUsers } from "@/lib/hooks";
+import { ConfirmSheet } from "@/components/ConfirmSheet";
 import type { Task, TaskStatus } from "@/lib/types";
 
 const STATUS_RING: Record<TaskStatus, string> = {
@@ -20,11 +22,17 @@ export function TaskItem({ task }: { task: Task }) {
   const project = projects?.find((p) => p.id === task.projectId);
   const assignee = users?.find((u) => u.id === task.assigneeId);
   const done = task.status === "done";
+  const [confirming, setConfirming] = useState(false);
 
-  async function toggle() {
-    const next: TaskStatus = done ? "queued" : "done";
+  async function setStatus(next: TaskStatus) {
     await api(`/tasks/${task.id}/status`, { method: "POST", body: JSON.stringify({ status: next }) });
     refreshTasks();
+  }
+
+  function onToggle() {
+    // Завершение подтверждаем (легко промахнуться), снятие — сразу.
+    if (done) setStatus("queued");
+    else setConfirming(true);
   }
 
   const due = task.dueAt ? new Date(task.dueAt) : null;
@@ -33,12 +41,25 @@ export function TaskItem({ task }: { task: Task }) {
   return (
     <div className="flex items-start gap-3 rounded-2xl bg-surface px-3.5 py-3">
       <button
-        onClick={toggle}
+        onClick={onToggle}
         className={`mt-0.5 h-5 w-5 shrink-0 rounded-full border-2 ${STATUS_RING[task.status]} transition`}
         aria-label="Готово"
       >
         {done && <span className="block text-center text-[11px] leading-4 text-white">✓</span>}
       </button>
+
+      {confirming && (
+        <ConfirmSheet
+          title="Завершить задачу?"
+          message={task.title}
+          confirmLabel="Завершить"
+          onConfirm={() => {
+            setConfirming(false);
+            setStatus("done");
+          }}
+          onCancel={() => setConfirming(false)}
+        />
+      )}
 
       <Link href={`/tasks/${task.id}`} className="min-w-0 flex-1">
         <div className={`text-[15px] leading-tight ${done ? "text-muted line-through" : ""}`}>

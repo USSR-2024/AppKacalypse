@@ -3,6 +3,7 @@ import { useState } from "react";
 import { api } from "@/lib/api";
 import { refreshTasks, useProjects, useUsers } from "@/lib/hooks";
 import { SheetSelect, type Opt } from "@/components/SheetSelect";
+import { useBackClose } from "@/lib/useBackClose";
 import type { Priority } from "@/lib/types";
 
 const PRIORITY_OPTS: Opt[] = [
@@ -21,13 +22,19 @@ export function TaskComposer({ onClose, defaultProjectId }: { onClose: () => voi
   const [priority, setPriority] = useState<Priority>("normal");
   const [important, setImportant] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  useBackClose(true, onClose);
 
   const projectOpts: Opt[] = (projects ?? []).map((p) => ({ value: p.id, label: p.name, color: p.color || "#4f8cff" }));
   const userOpts: Opt[] = (users ?? []).map((u) => ({ value: u.id, label: u.displayName, avatar: u.avatarUrl }));
 
   async function submit() {
-    if (!title.trim()) return;
+    if (!title.trim()) {
+      setErr("Введите название задачи");
+      return;
+    }
     setBusy(true);
+    setErr("");
     try {
       await api("/tasks", {
         method: "POST",
@@ -42,6 +49,8 @@ export function TaskComposer({ onClose, defaultProjectId }: { onClose: () => voi
       });
       refreshTasks();
       onClose();
+    } catch {
+      setErr("Не удалось создать задачу. Попробуйте ещё раз.");
     } finally {
       setBusy(false);
     }
@@ -58,7 +67,10 @@ export function TaskComposer({ onClose, defaultProjectId }: { onClose: () => voi
         <input
           autoFocus
           value={title}
-          onChange={(e) => setTitle(e.target.value)}
+          onChange={(e) => {
+            setTitle(e.target.value);
+            if (err) setErr("");
+          }}
           placeholder="Что нужно сделать?"
           className="w-full bg-transparent text-lg outline-none placeholder:text-muted"
           onKeyDown={(e) => e.key === "Enter" && submit()}
@@ -79,6 +91,8 @@ export function TaskComposer({ onClose, defaultProjectId }: { onClose: () => voi
           <SheetSelect title="Приоритет" placeholder="Приоритет" value={priority} onChange={(v) => setPriority(v as Priority)} options={PRIORITY_OPTS} allowClear={false} />
         </div>
 
+        {err && <p className="mt-3 text-sm text-danger">{err}</p>}
+
         <div className="mt-3 flex items-center justify-between">
           <button
             onClick={() => setImportant(!important)}
@@ -88,7 +102,7 @@ export function TaskComposer({ onClose, defaultProjectId }: { onClose: () => voi
           </button>
           <button
             onClick={submit}
-            disabled={busy || !title.trim()}
+            disabled={busy}
             className="rounded-xl bg-accent px-6 py-2.5 font-medium text-white disabled:opacity-40"
           >
             {busy ? "…" : "Создать"}

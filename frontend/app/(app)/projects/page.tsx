@@ -1,45 +1,29 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
-import { api } from "@/lib/api";
 import { useProjects } from "@/lib/hooks";
+import { ProjectComposer } from "@/components/ProjectComposer";
 
 export default function ProjectsPage() {
   const { data: projects, isLoading, mutate } = useProjects();
-  const [name, setName] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  async function create() {
-    if (!name.trim()) return;
-    setBusy(true);
-    try {
-      await api("/projects", { method: "POST", body: JSON.stringify({ name: name.trim() }) });
-      setName("");
-      mutate();
-    } finally {
-      setBusy(false);
-    }
-  }
+  const [composer, setComposer] = useState(false);
 
   return (
     <main className="px-4 pt-12">
-      <header className="mb-6">
-        <p className="text-sm text-muted">Направления команды</p>
-        <h1 className="text-2xl font-semibold">Проекты</h1>
+      <header className="mb-6 flex items-end justify-between">
+        <div>
+          <p className="text-sm text-muted">Направления команды</p>
+          <h1 className="text-2xl font-semibold">Проекты</h1>
+        </div>
+        <button
+          onClick={() => setComposer(true)}
+          className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white"
+        >
+          + Проект
+        </button>
       </header>
 
-      <div className="mb-5 flex gap-2">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && create()}
-          placeholder="Новое направление"
-          className="flex-1 rounded-xl bg-surface px-3 py-2.5 text-sm outline-none placeholder:text-muted"
-        />
-        <button onClick={create} disabled={busy || !name.trim()} className="rounded-xl bg-accent px-4 text-white disabled:opacity-40">
-          +
-        </button>
-      </div>
+      {composer && <ProjectComposer onClose={() => setComposer(false)} onCreated={mutate} />}
 
       {isLoading ? (
         <p className="text-muted">Загрузка…</p>
