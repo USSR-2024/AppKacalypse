@@ -3,6 +3,7 @@ import { useState } from "react";
 import { api } from "@/lib/api";
 import { refreshTasks, useProjects, useUsers } from "@/lib/hooks";
 import { SheetSelect, type Opt } from "./SheetSelect";
+import { AssigneePicker } from "./AssigneePicker";
 import type { Priority } from "@/lib/types";
 
 export interface Draft {
@@ -35,7 +36,9 @@ export function DraftCard({ draft }: { draft: Draft }) {
   const { data: users } = useUsers();
   const [title, setTitle] = useState(draft.title);
   const [projectId, setProjectId] = useState(draft.projectId ?? "");
-  const [assigneeId, setAssigneeId] = useState(draft.assigneeId ?? "");
+  // Распознанный исполнитель: из команды → userIds; имя не из команды → внешний.
+  const [userIds, setUserIds] = useState<string[]>(draft.assigneeId ? [draft.assigneeId] : []);
+  const [externals, setExternals] = useState<string[]>(!draft.assigneeId && draft.assigneeName ? [draft.assigneeName] : []);
   const [due, setDue] = useState(draft.dueAt ? toLocal(draft.dueAt) : "");
   const [priority, setPriority] = useState<Priority>(draft.priority);
   const [important, setImportant] = useState(false);
@@ -43,7 +46,6 @@ export function DraftCard({ draft }: { draft: Draft }) {
   const [busy, setBusy] = useState(false);
 
   const projectOpts: Opt[] = (projects ?? []).map((p) => ({ value: p.id, label: p.name, color: p.color || "#4f8cff" }));
-  const userOpts: Opt[] = (users ?? []).map((u) => ({ value: u.id, label: u.displayName, avatar: u.avatarUrl }));
 
   async function create() {
     if (!title.trim()) return;
@@ -54,7 +56,8 @@ export function DraftCard({ draft }: { draft: Draft }) {
         body: JSON.stringify({
           title: title.trim(),
           projectId: projectId || null,
-          assigneeIds: assigneeId ? [assigneeId] : [],
+          assigneeIds: userIds,
+          externalAssignees: externals,
           dueAt: due ? new Date(due).toISOString() : null,
           priority,
           isImportant: important,
@@ -85,7 +88,7 @@ export function DraftCard({ draft }: { draft: Draft }) {
         className="w-full bg-transparent text-[15px] font-medium outline-none"
       />
       <SheetSelect title="Проект" placeholder="Без проекта" value={projectId} onChange={setProjectId} options={projectOpts} />
-      <SheetSelect title="Исполнитель" placeholder="Без исполнителя" value={assigneeId} onChange={setAssigneeId} options={userOpts} />
+      <AssigneePicker users={users ?? []} userIds={userIds} externals={externals} onChange={(u, e) => { setUserIds(u); setExternals(e); }} />
       <label className="flex items-center justify-between gap-2 rounded-xl bg-surface px-3 py-2.5 text-sm">
         <span className="shrink-0 text-muted">Дедлайн{draft.dueText ? ` (${draft.dueText})` : ""}</span>
         <input

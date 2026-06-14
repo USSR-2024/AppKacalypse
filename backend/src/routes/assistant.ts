@@ -34,10 +34,26 @@ assistantRoutes.post("/extract", async (c) => {
   }
 
   const drafts = (result.tasks ?? []).map((task) => draftFromTask(task, resolvers));
+
+  // Доспрос по незаполненным полям карточки (детерминированно, не полагаясь на LLM).
+  const questions: string[] = [];
+  if (drafts.length) {
+    const need = { assignee: false, due: false, project: false };
+    for (const d of drafts) {
+      if (!d.assigneeId && !d.assigneeName) need.assignee = true;
+      if (!d.dueAt && !d.dueText) need.due = true;
+      if (!d.projectId && !d.projectName) need.project = true;
+    }
+    if (need.assignee) questions.push("кто исполнитель?");
+    if (need.due) questions.push("к какому сроку?");
+    if (need.project) questions.push("в какой проект (или это личная задача)?");
+  }
+  questions.push(...(result.questions ?? []));
+
   return c.json({
     intent: result.intent ?? "no_action",
     note: result.note ?? null,
-    questions: result.questions ?? [],
+    questions,
     needsConfirmation: result.needs_confirmation ?? true,
     drafts,
     tasks: [],
