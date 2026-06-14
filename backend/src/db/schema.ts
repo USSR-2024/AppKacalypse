@@ -228,6 +228,27 @@ export const botLoginCodes = pgTable('bot_login_codes', {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// teams — переиспользуемый набор людей. Команду можно добавить в проект целиком
+// (её участники становятся участниками проекта).
+// ─────────────────────────────────────────────────────────────────────────────
+export const teams = pgTable('teams', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull(),
+  ownerId: uuid('owner_id').notNull().references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const teamMembers = pgTable('team_members', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  teamId: uuid('team_id').notNull().references(() => teams.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  teamUserUnique: unique('team_member_unique').on(t.teamId, t.userId),
+  teamIdx: index('team_members_team_idx').on(t.teamId),
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
 // push_subscriptions — Web Push (PWA). Один user → много устройств.
 // ─────────────────────────────────────────────────────────────────────────────
 export const pushSubscriptions = pgTable('push_subscriptions', {

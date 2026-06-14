@@ -1,6 +1,6 @@
 import useSWR, { mutate } from "swr";
 import { fetcher } from "./api";
-import type { Task, Project, User, Comment } from "./types";
+import type { Task, Project, ProjectDetail, User, Comment, Team } from "./types";
 
 export function useTasks(query: string) {
   return useSWR<Task[]>(`/tasks${query}`, fetcher);
@@ -12,6 +12,14 @@ export function useTask(id: string) {
 
 export function useProjects() {
   return useSWR<Project[]>("/projects", fetcher);
+}
+
+export function useProjectDetail(id: string) {
+  return useSWR<ProjectDetail>(id ? `/projects/${id}` : null, fetcher);
+}
+
+export function useTeams() {
+  return useSWR<Team[]>("/teams", fetcher);
 }
 
 export function useUsers() {

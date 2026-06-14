@@ -49,6 +49,31 @@ export interface Project {
   isArchived: boolean;
 }
 
+export interface ProjectMember {
+  userId: string;
+  role: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
+export interface ProjectDetail extends Project {
+  members: ProjectMember[];
+}
+
+export interface TeamMember {
+  userId: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  ownerId: string;
+  createdAt: string;
+  members: TeamMember[];
+}
+
 export interface User {
   id: string;
   displayName: string;

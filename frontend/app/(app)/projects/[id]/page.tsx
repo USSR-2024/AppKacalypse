@@ -1,11 +1,15 @@
 "use client";
 import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { mutate } from "swr";
+import { api } from "@/lib/api";
 import { useAuth } from "@/lib/store";
-import { useProjects, useTasks } from "@/lib/hooks";
+import { useProjects, useProjectDetail, useTasks, useTeams, useUsers } from "@/lib/hooks";
 import { TaskItem } from "@/components/TaskItem";
+import { Avatar } from "@/components/Avatar";
+import { SheetSelect, type Opt } from "@/components/SheetSelect";
 import { STATUS_LABELS } from "@/lib/format";
-import type { ProjectView, Task, TaskStatus } from "@/lib/types";
+import type { ProjectDetail, ProjectView, Task, TaskStatus } from "@/lib/types";
 
 const BOARD_COLS: TaskStatus[] = ["queued", "in_progress", "done"];
 
@@ -37,7 +41,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const { id } = use(params);
   const me = useAuth((s) => s.me);
   const { data: projects } = useProjects();
+  const { data: detail } = useProjectDetail(id);
   const project = projects?.find((p) => p.id === id);
+  const canManage = !!me && !!detail && (detail.ownerId === me.id || me.role === "admin" || me.role === "owner");
   const { data, isLoading } = useTasks(`?projectId=${id}`);
   const tasks = data ?? [];
 
@@ -142,6 +148,64 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           {done.map((t) => <TaskItem key={t.id} task={t} />)}
         </div>
       )}
+
+      {detail && <ProjectTeam projectId={id} detail={detail} canManage={canManage} />}
     </main>
+  );
+}
+
+function ProjectTeam({ projectId, detail, canManage }: { projectId: string; detail: ProjectDetail; canManage: boolean }) {
+  const { data: users } = useUsers();
+  const { data: teams } = useTeams();
+  const [addUser, setAddUser] = useState("");
+  const [addTeam, setAddTeam] = useState("");
+
+  const memberIds = new Set(detail.members.map((m) => m.userId));
+  const userOpts: Opt[] = (users ?? []).filter((u) => !memberIds.has(u.id)).map((u) => ({ value: u.id, label: u.displayName, avatar: u.avatarUrl }));
+  const teamOpts: Opt[] = (teams ?? []).map((t) => ({ value: t.id, label: `${t.name} (${t.members.length})` }));
+
+  async function addMember(userId: string) {
+    if (!userId) return;
+    await api(`/projects/${projectId}/members`, { method: "POST", body: JSON.stringify({ userId }) });
+    setAddUser("");
+    mutate(`/projects/${projectId}`);
+  }
+  async function addTeamMembers(teamId: string) {
+    if (!teamId) return;
+    await api(`/projects/${projectId}/team`, { method: "POST", body: JSON.stringify({ teamId }) });
+    setAddTeam("");
+    mutate(`/projects/${projectId}`);
+  }
+  async function removeMember(userId: string) {
+    await api(`/projects/${projectId}/members/${userId}`, { method: "DELETE" });
+    mutate(`/projects/${projectId}`);
+  }
+
+  return (
+    <section className="mt-8">
+      <h2 className="mb-2 px-1 text-xs uppercase tracking-wide text-muted">Команда проекта · {detail.members.length}</h2>
+      <div className="flex flex-col gap-2">
+        {detail.members.map((m) => (
+          <div key={m.userId} className="flex items-center gap-3 rounded-2xl bg-surface px-4 py-2.5">
+            <Avatar src={m.avatarUrl} name={m.displayName} className="h-8 w-8 bg-surface-2 text-sm" />
+            <span className="flex-1 truncate text-sm">{m.displayName}</span>
+            {m.role === "lead" && <span className="text-xs text-muted">лид</span>}
+            {canManage && m.role !== "lead" && (
+              <button onClick={() => removeMember(m.userId)} className="text-xs text-danger">убрать</button>
+            )}
+          </div>
+        ))}
+      </div>
+      {canManage && (
+        <div className="mt-2 flex flex-col gap-2">
+          {userOpts.length > 0 && (
+            <SheetSelect title="Добавить участника" placeholder="+ Участник" value={addUser} onChange={addMember} options={userOpts} allowClear={false} />
+          )}
+          {teamOpts.length > 0 && (
+            <SheetSelect title="Добавить команду" placeholder="+ Команда целиком" value={addTeam} onChange={addTeamMembers} options={teamOpts} allowClear={false} />
+          )}
+        </div>
+      )}
+    </section>
   );
 }

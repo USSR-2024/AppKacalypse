@@ -122,6 +122,29 @@ projectRoutes.post('/:id/members', async (c) => {
   return c.json(member, 201);
 });
 
+// Добавить команду целиком — её участники становятся участниками проекта.
+projectRoutes.post('/:id/team', async (c) => {
+  const u = c.get('user');
+  const id = c.req.param('id');
+  const [project] = await db.select().from(p).where(eq(p.id, id)).limit(1);
+  if (!project) return c.json({ error: 'not_found' }, 404);
+  if (project.ownerId !== u.sub && !isAdmin(u.role)) return c.json({ error: 'forbidden' }, 403);
+
+  const parsed = z.object({ teamId: z.string().uuid() }).safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: 'bad_request' }, 400);
+
+  const members = await db
+    .select({ userId: schema.teamMembers.userId })
+    .from(schema.teamMembers)
+    .where(eq(schema.teamMembers.teamId, parsed.data.teamId));
+  if (members.length) {
+    await db.insert(pm)
+      .values(members.map((m) => ({ projectId: id, userId: m.userId, role: 'member' as const })))
+      .onConflictDoNothing();
+  }
+  return c.json({ ok: true, added: members.length }, 201);
+});
+
 projectRoutes.delete('/:id/members/:userId', async (c) => {
   const u = c.get('user');
   const id = c.req.param('id');
