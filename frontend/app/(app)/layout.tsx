@@ -8,6 +8,7 @@ import { fetcher } from "@/lib/api";
 import { registerSW } from "@/lib/push";
 import { Avatar } from "@/components/Avatar";
 import { BottomNav } from "@/components/BottomNav";
+import { PullToRefresh } from "@/components/PullToRefresh";
 import { TaskComposer } from "@/components/TaskComposer";
 import type { Me } from "@/lib/types";
 
@@ -42,7 +43,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <Avatar src={me?.avatarUrl} name={me?.displayName} className="h-9 w-9 bg-surface text-sm" />
       </Link>
 
-      <div className="flex-1 pb-24">{children}</div>
+      <div className="flex-1 pb-24">
+        <PullToRefresh>{children}</PullToRefresh>
+      </div>
 
       {!hideFab && (
         <button
