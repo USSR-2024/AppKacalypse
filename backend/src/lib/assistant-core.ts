@@ -1,6 +1,7 @@
-import { and, asc, desc, eq, inArray, isNotNull, lte } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, lte, or } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { env } from "./env.js";
+import { assignedTaskIds } from "./assignees.js";
 import type { InferSelectModel } from "drizzle-orm";
 
 const t = schema.tasks;
@@ -103,8 +104,8 @@ export async function runTaskQuery(meId: string, q: GatewayQuery, r: Resolvers):
   const assigneeFilter = q.assignee ? r.resolveAssignee(q.assignee) : null;
   const projectFilter = q.project ? r.resolveProject(q.project) : null;
 
-  if (assigneeFilter) conds.push(eq(t.assigneeId, assigneeFilter));
-  else if (!projectFilter) conds.push(eq(t.assigneeId, meId));
+  if (assigneeFilter) conds.push(inArray(t.id, assignedTaskIds(assigneeFilter)));
+  else if (!projectFilter) conds.push(or(eq(t.controllerId, meId), inArray(t.id, assignedTaskIds(meId)))!);
 
   if (projectFilter) conds.push(eq(t.projectId, projectFilter));
   if (q.important_only || q.scope === "important") conds.push(eq(t.isImportant, true));

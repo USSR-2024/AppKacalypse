@@ -4,7 +4,7 @@ import Link from "next/link";
 import { format, isPast, isToday } from "date-fns";
 import { ru } from "date-fns/locale";
 import { api } from "@/lib/api";
-import { refreshTasks, useProjects, useUsers } from "@/lib/hooks";
+import { refreshTasks, useProjects } from "@/lib/hooks";
 import { ConfirmSheet } from "@/components/ConfirmSheet";
 import type { Task, TaskStatus } from "@/lib/types";
 
@@ -18,9 +18,14 @@ const STATUS_RING: Record<TaskStatus, string> = {
 
 export function TaskItem({ task }: { task: Task }) {
   const { data: projects } = useProjects();
-  const { data: users } = useUsers();
   const project = projects?.find((p) => p.id === task.projectId);
-  const assignee = users?.find((u) => u.id === task.assigneeId);
+  const assignees = task.assignees ?? [];
+  const assigneeLabel =
+    assignees.length === 0
+      ? null
+      : assignees.length <= 2
+        ? assignees.map((a) => a.displayName).join(", ")
+        : `${assignees[0].displayName} +${assignees.length - 1}`;
   const done = task.status === "done";
   const [confirming, setConfirming] = useState(false);
 
@@ -73,7 +78,7 @@ export function TaskItem({ task }: { task: Task }) {
               {project.name}
             </span>
           )}
-          {assignee && <span>👤 {assignee.displayName}</span>}
+          {assigneeLabel && <span>👤 {assigneeLabel}</span>}
           {due && (
             <span className={overdue ? "text-danger" : isToday(due) ? "text-warn" : ""}>
               🕑 {format(due, "d MMM HH:mm", { locale: ru })}

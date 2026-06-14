@@ -3,13 +3,21 @@ export type ProjectView = "list" | "board" | "table";
 export type Priority = "low" | "normal" | "high";
 export type TaskSource = "app" | "telegram" | "email" | "calendar" | "ai";
 
+export interface Assignee {
+  userId: string | null;
+  externalName: string | null;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
 export interface Task {
   id: string;
   title: string;
   description: string;
   projectId: string | null;
   creatorId: string;
-  assigneeId: string | null;
+  controllerId: string | null;
+  assignees: Assignee[];
   status: TaskStatus;
   priority: Priority;
   isImportant: boolean;

@@ -1,6 +1,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { formatTaskList } from "./telegram-bot.js";
+import { assignedTaskIds } from "./assignees.js";
 import type { TaskRow } from "./assistant-core.js";
 
 const t = schema.tasks;
@@ -17,7 +18,7 @@ async function activeTasks(userId: string): Promise<TaskRow[]> {
   return db
     .select()
     .from(t)
-    .where(and(eq(t.assigneeId, userId), inArray(t.status, ["queued", "in_progress"])))
+    .where(and(inArray(t.id, assignedTaskIds(userId)), inArray(t.status, ["queued", "in_progress"])))
     .limit(300);
 }
 
@@ -56,7 +57,7 @@ export async function eveningDigest(userId: string, tz: string): Promise<string 
   const doneToday = await db
     .select()
     .from(t)
-    .where(and(eq(t.assigneeId, userId), eq(t.status, "done")))
+    .where(and(inArray(t.id, assignedTaskIds(userId)), eq(t.status, "done")))
     .limit(300)
     .then((rows) => rows.filter((x) => x.completedAt && new Date(x.completedAt) >= start && new Date(x.completedAt) <= end));
 

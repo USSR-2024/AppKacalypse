@@ -289,13 +289,14 @@ export async function processUpdate(update: TgUpdate): Promise<void> {
         description: String(gt.description ?? ""),
         projectId,
         creatorId: user.id,
-        assigneeId,
+        controllerId: user.id,   // контролёр = постановщик из телеги
         priority: mapPriority(gt.priority as string | undefined),
         dueAt: gt.due_iso ? new Date(gt.due_iso as string) : null,
         isTriaged: !!projectId,
         source: "telegram",
       })
       .returning();
+    await db.insert(schema.taskAssignees).values({ taskId: task!.id, userId: assigneeId });
     await logActivity({ taskId: task!.id, actorId: user.id, type: "created" });
     const due = task!.dueAt ? ` — 🕑 ${fmtDate(task!.dueAt, tz)}` : "";
     lines.push(`✅ <b>${esc(task!.title)}</b>${due}${projectId ? "" : "  📥 во Входящих"}`);

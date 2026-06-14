@@ -3,6 +3,7 @@ import { useState } from "react";
 import { api } from "@/lib/api";
 import { refreshTasks, useProjects, useUsers } from "@/lib/hooks";
 import { SheetSelect, type Opt } from "@/components/SheetSelect";
+import { AssigneePicker } from "@/components/AssigneePicker";
 import { useBackClose } from "@/lib/useBackClose";
 import type { Priority } from "@/lib/types";
 
@@ -17,7 +18,9 @@ export function TaskComposer({ onClose, defaultProjectId }: { onClose: () => voi
   const { data: users } = useUsers();
   const [title, setTitle] = useState("");
   const [projectId, setProjectId] = useState(defaultProjectId ?? "");
-  const [assigneeId, setAssigneeId] = useState("");
+  const [userIds, setUserIds] = useState<string[]>([]);
+  const [externals, setExternals] = useState<string[]>([]);
+  const [controllerId, setControllerId] = useState("");
   const [due, setDue] = useState("");
   const [priority, setPriority] = useState<Priority>("normal");
   const [important, setImportant] = useState(false);
@@ -41,7 +44,9 @@ export function TaskComposer({ onClose, defaultProjectId }: { onClose: () => voi
         body: JSON.stringify({
           title: title.trim(),
           projectId: projectId || null,
-          assigneeId: assigneeId || null,
+          assigneeIds: userIds,
+          externalAssignees: externals,
+          controllerId: controllerId || null,
           dueAt: due ? new Date(due).toISOString() : null,
           priority,
           isImportant: important,
@@ -78,7 +83,8 @@ export function TaskComposer({ onClose, defaultProjectId }: { onClose: () => voi
 
         <div className="mt-4 flex flex-col gap-2">
           <SheetSelect title="Проект" placeholder="Без проекта" value={projectId} onChange={setProjectId} options={projectOpts} />
-          <SheetSelect title="Исполнитель" placeholder="Без исполнителя" value={assigneeId} onChange={setAssigneeId} options={userOpts} />
+          <AssigneePicker users={users ?? []} userIds={userIds} externals={externals} onChange={(u, e) => { setUserIds(u); setExternals(e); }} />
+          <SheetSelect title="Контролёр" placeholder="Контролёр — я (создатель)" value={controllerId} onChange={setControllerId} options={userOpts} />
           <label className="flex items-center justify-between gap-2 rounded-xl bg-surface px-3 py-2.5 text-sm">
             <span className="shrink-0 text-muted">Дедлайн</span>
             <input

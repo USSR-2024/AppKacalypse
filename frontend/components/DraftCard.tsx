@@ -54,7 +54,7 @@ export function DraftCard({ draft }: { draft: Draft }) {
         body: JSON.stringify({
           title: title.trim(),
           projectId: projectId || null,
-          assigneeId: assigneeId || null,
+          assigneeIds: assigneeId ? [assigneeId] : [],
           dueAt: due ? new Date(due).toISOString() : null,
           priority,
           isImportant: important,

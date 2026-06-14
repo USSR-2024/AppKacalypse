@@ -5,6 +5,7 @@ import { mutate } from "swr";
 import { api } from "@/lib/api";
 import { refreshTasks, useProjects, useUsers, useTask } from "@/lib/hooks";
 import { SheetSelect, type Opt } from "@/components/SheetSelect";
+import { AssigneePicker, splitAssignees } from "@/components/AssigneePicker";
 import { toLocalInput, STATUS_LABELS, PRIORITY_LABELS } from "@/lib/format";
 import type { Priority, TaskStatus } from "@/lib/types";
 
@@ -24,7 +25,9 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [projectId, setProjectId] = useState("");
-  const [assigneeId, setAssigneeId] = useState("");
+  const [userIds, setUserIds] = useState<string[]>([]);
+  const [externals, setExternals] = useState<string[]>([]);
+  const [controllerId, setControllerId] = useState("");
   const [due, setDue] = useState("");
   const [priority, setPriority] = useState<Priority>("normal");
   const [status, setStatus] = useState<TaskStatus>("queued");
@@ -36,7 +39,10 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
     setTitle(task.title);
     setDescription(task.description);
     setProjectId(task.projectId ?? "");
-    setAssigneeId(task.assigneeId ?? "");
+    const { userIds: uids, externals: exts } = splitAssignees(task.assignees ?? []);
+    setUserIds(uids);
+    setExternals(exts);
+    setControllerId(task.controllerId ?? "");
     setDue(task.dueAt ? toLocalInput(task.dueAt) : "");
     setPriority(task.priority);
     setStatus(task.status);
@@ -60,7 +66,9 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
           title: title.trim(),
           description,
           projectId: projectId || null,
-          assigneeId: assigneeId || null,
+          assigneeIds: userIds,
+          externalAssignees: externals,
+          controllerId: controllerId || null,
           dueAt: due ? new Date(due).toISOString() : null,
           priority,
           isImportant: important,
@@ -101,7 +109,8 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
 
         <SheetSelect title="Статус" placeholder="Статус" value={status} onChange={(v) => setStatus(v as TaskStatus)} options={STATUS_OPTS} allowClear={false} />
         <SheetSelect title="Проект" placeholder="Без проекта" value={projectId} onChange={setProjectId} options={projectOpts} />
-        <SheetSelect title="Исполнитель" placeholder="Без исполнителя" value={assigneeId} onChange={setAssigneeId} options={userOpts} />
+        <AssigneePicker users={users ?? []} userIds={userIds} externals={externals} onChange={(u, e) => { setUserIds(u); setExternals(e); }} />
+        <SheetSelect title="Контролёр" placeholder="Контролёр — создатель" value={controllerId} onChange={setControllerId} options={userOpts} />
         <label className="flex items-center justify-between gap-2 rounded-xl bg-surface px-3 py-2.5 text-sm">
           <span className="shrink-0 text-muted">Дедлайн</span>
           <input

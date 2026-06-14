@@ -120,7 +120,9 @@ export const tasks = pgTable('tasks', {
 
   projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
   creatorId: uuid('creator_id').notNull().references(() => users.id),
-  assigneeId: uuid('assignee_id').references(() => users.id),
+  // Контролёр = ответственный за результат. По умолчанию = создатель (проставляется в коде/миграции).
+  // Исполнители вынесены в task_assignees (несколько + внешние без аккаунта).
+  controllerId: uuid('controller_id').references(() => users.id),
 
   status: taskStatus('status').notNull().default('queued'),
   priority: taskPriority('priority').notNull().default('normal'),
@@ -136,10 +138,26 @@ export const tasks = pgTable('tasks', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
-  assigneeIdx: index('tasks_assignee_idx').on(t.assigneeId),
+  controllerIdx: index('tasks_controller_idx').on(t.controllerId),
   projectIdx: index('tasks_project_idx').on(t.projectId),
   statusIdx: index('tasks_status_idx').on(t.status),
   dueIdx: index('tasks_due_idx').on(t.dueAt),
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// task_assignees — исполнители задачи. Несколько на задачу. Либо внутренний
+// (userId), либо внешний без аккаунта (externalName) — задачу поставили человеку
+// не из команды, а отвечает за результат контролёр.
+// ─────────────────────────────────────────────────────────────────────────────
+export const taskAssignees = pgTable('task_assignees', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  taskId: uuid('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  externalName: text('external_name'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  taskIdx: index('task_assignees_task_idx').on(t.taskId),
+  userIdx: index('task_assignees_user_idx').on(t.userId),
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────

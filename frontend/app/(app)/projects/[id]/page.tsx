@@ -2,7 +2,7 @@
 import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/store";
-import { useProjects, useTasks, useUsers } from "@/lib/hooks";
+import { useProjects, useTasks } from "@/lib/hooks";
 import { TaskItem } from "@/components/TaskItem";
 import { STATUS_LABELS } from "@/lib/format";
 import type { ProjectView, Task, TaskStatus } from "@/lib/types";
@@ -14,16 +14,21 @@ function fmtDue(due: string | null): string {
   return new Date(due).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
 }
 
+function assigneeText(task: Task): string | null {
+  const a = task.assignees ?? [];
+  if (!a.length) return null;
+  return a.length <= 2 ? a.map((x) => x.displayName).join(", ") : `${a[0].displayName} +${a.length - 1}`;
+}
+
 function MiniCard({ task }: { task: Task }) {
-  const { data: users } = useUsers();
-  const assignee = users?.find((u) => u.id === task.assigneeId);
+  const label = assigneeText(task);
   return (
     <Link href={`/tasks/${task.id}`} className="block rounded-xl bg-surface px-3 py-2.5">
       <div className="text-sm leading-tight">
         {task.isImportant && <span className="mr-1 text-warn">★</span>}
         {task.title}
       </div>
-      {assignee && <div className="mt-1 text-xs text-muted">👤 {assignee.displayName}</div>}
+      {label && <div className="mt-1 text-xs text-muted">👤 {label}</div>}
     </Link>
   );
 }
@@ -32,7 +37,6 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const { id } = use(params);
   const me = useAuth((s) => s.me);
   const { data: projects } = useProjects();
-  const { data: users } = useUsers();
   const project = projects?.find((p) => p.id === id);
   const { data, isLoading } = useTasks(`?projectId=${id}`);
   const tasks = data ?? [];
@@ -114,7 +118,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             <span>Задача</span><span>Срок</span><span>Статус</span>
           </div>
           {tasks.map((t) => {
-            const assignee = users?.find((u) => u.id === t.assigneeId);
+            const label = assigneeText(t);
             return (
               <Link
                 key={t.id}
@@ -123,7 +127,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
               >
                 <span className="min-w-0">
                   <span className="block truncate">{t.isImportant && <span className="mr-1 text-warn">★</span>}{t.title}</span>
-                  {assignee && <span className="block truncate text-xs text-muted">👤 {assignee.displayName}</span>}
+                  {label && <span className="block truncate text-xs text-muted">👤 {label}</span>}
                 </span>
                 <span className="text-xs text-muted">{fmtDue(t.dueAt)}</span>
                 <span className="text-xs text-muted">{STATUS_LABELS[t.status]}</span>
