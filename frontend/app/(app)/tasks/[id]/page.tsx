@@ -3,7 +3,7 @@ import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { mutate } from "swr";
 import { api } from "@/lib/api";
-import { refreshTasks, useProjects, useUsers, useTask } from "@/lib/hooks";
+import { refreshTasks, useProjects, useProjectDetail, useUsers, useTask } from "@/lib/hooks";
 import { SheetSelect, type Opt } from "@/components/SheetSelect";
 import { AssigneePicker, splitAssignees } from "@/components/AssigneePicker";
 import { KindToggle } from "@/components/KindToggle";
@@ -29,6 +29,7 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<"personal" | "work">("personal");
   const [projectId, setProjectId] = useState("");
+  const [sectionId, setSectionId] = useState("");
   const [userIds, setUserIds] = useState<string[]>([]);
   const [externals, setExternals] = useState<string[]>([]);
   const [controllerId, setControllerId] = useState("");
@@ -37,11 +38,13 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
   const [status, setStatus] = useState<TaskStatus>("queued");
   const [important, setImportant] = useState(false);
   const [busy, setBusy] = useState(false);
+  const { data: projDetail } = useProjectDetail(projectId);
 
   function resetFields(t: Task) {
     setTitle(t.title);
     setDescription(t.description);
     setProjectId(t.projectId ?? "");
+    setSectionId(t.sectionId ?? "");
     setKind(t.projectId ? "work" : "personal");
     const { userIds: uids, externals: exts } = splitAssignees(t.assignees ?? []);
     setUserIds(uids);
@@ -61,6 +64,7 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
 
   const projectOpts: Opt[] = (projects ?? []).map((p) => ({ value: p.id, label: p.name, color: p.color || "#4f8cff" }));
   const userOpts: Opt[] = (users ?? []).map((u) => ({ value: u.id, label: u.displayName, avatar: u.avatarUrl }));
+  const sectionOpts: Opt[] = (projDetail?.sections ?? []).map((s) => ({ value: s.id, label: s.name }));
 
   async function save() {
     setBusy(true);
@@ -74,6 +78,7 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
           title: title.trim(),
           description,
           projectId: projectId || null,
+          sectionId: sectionId || null,
           assigneeIds: userIds,
           externalAssignees: externals,
           controllerId: controllerId || null,
@@ -150,9 +155,12 @@ export default function TaskPage({ params }: { params: Promise<{ id: string }> }
             />
 
             <SheetSelect title="Статус" placeholder="Статус" value={status} onChange={(v) => setStatus(v as TaskStatus)} options={STATUS_OPTS} allowClear={false} />
-            <KindToggle kind={kind} onChange={(k) => { setKind(k); if (k === "personal") setProjectId(""); }} />
+            <KindToggle kind={kind} onChange={(k) => { setKind(k); if (k === "personal") { setProjectId(""); setSectionId(""); } }} />
             {kind === "work" && (
-              <SheetSelect title="Проект" placeholder="Выберите проект" value={projectId} onChange={setProjectId} options={projectOpts} />
+              <SheetSelect title="Проект" placeholder="Выберите проект" value={projectId} onChange={(v) => { setProjectId(v); setSectionId(""); }} options={projectOpts} />
+            )}
+            {kind === "work" && projectId && sectionOpts.length > 0 && (
+              <SheetSelect title="Раздел" placeholder="Без раздела" value={sectionId} onChange={setSectionId} options={sectionOpts} />
             )}
             <AssigneePicker users={users ?? []} userIds={userIds} externals={externals} onChange={(u, e) => { setUserIds(u); setExternals(e); }} />
             <SheetSelect title="Контролёр" placeholder="Контролёр — создатель" value={controllerId} onChange={setControllerId} options={userOpts} />

@@ -25,6 +25,7 @@ export interface Task {
   title: string;
   description: string;
   projectId: string | null;
+  sectionId: string | null;
   creatorId: string;
   controllerId: string | null;
   assignees: Assignee[];
@@ -56,8 +57,16 @@ export interface ProjectMember {
   avatarUrl: string | null;
 }
 
+export interface Section {
+  id: string;
+  projectId: string;
+  name: string;
+  position: number;
+}
+
 export interface ProjectDetail extends Project {
   members: ProjectMember[];
+  sections: Section[];
 }
 
 export interface TeamMember {

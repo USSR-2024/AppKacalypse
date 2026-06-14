@@ -57,6 +57,7 @@ const createSchema = z.object({
   title: z.string().min(1).max(500),
   description: z.string().max(5000).optional(),
   projectId: z.string().uuid().nullable().optional(),
+  sectionId: z.string().uuid().nullable().optional(),
   controllerId: z.string().uuid().nullable().optional(),
   assigneeIds: z.array(z.string().uuid()).optional(),
   externalAssignees: z.array(z.string().min(1).max(100)).optional(),
@@ -84,6 +85,7 @@ taskRoutes.post('/', async (c) => {
       title: d.title,
       description: d.description ?? '',
       projectId: d.projectId ?? null,
+      sectionId: d.sectionId ?? null,
       creatorId: u.sub,
       controllerId: d.controllerId ?? u.sub,   // по умолчанию контролёр = создатель
       priority: d.priority ?? 'normal',
@@ -211,6 +213,7 @@ const updateSchema = z.object({
   title: z.string().min(1).max(500).optional(),
   description: z.string().max(5000).optional(),
   projectId: z.string().uuid().nullable().optional(),
+  sectionId: z.string().uuid().nullable().optional(),
   controllerId: z.string().uuid().nullable().optional(),
   assigneeIds: z.array(z.string().uuid()).optional(),
   externalAssignees: z.array(z.string().min(1).max(100)).optional(),
@@ -237,6 +240,9 @@ taskRoutes.patch('/:id', async (c) => {
   if (d.title !== undefined) patch.title = d.title;
   if (d.description !== undefined) patch.description = d.description;
   if (d.projectId !== undefined) patch.projectId = d.projectId;
+  if (d.sectionId !== undefined) patch.sectionId = d.sectionId;
+  // Сменили проект, но раздел явно не задан → сбрасываем (секция принадлежит проекту).
+  if (d.projectId !== undefined && d.projectId !== task.projectId && d.sectionId === undefined) patch.sectionId = null;
   if (d.controllerId !== undefined) patch.controllerId = d.controllerId;
   if (d.priority !== undefined) patch.priority = d.priority;
   if (d.isImportant !== undefined) patch.isImportant = d.isImportant;

@@ -4,12 +4,12 @@ import Link from "next/link";
 import { mutate } from "swr";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/store";
-import { useProjects, useProjectDetail, useTasks, useTeams, useUsers } from "@/lib/hooks";
+import { refreshTasks, useProjects, useProjectDetail, useTasks, useTeams, useUsers } from "@/lib/hooks";
 import { TaskItem } from "@/components/TaskItem";
 import { Avatar } from "@/components/Avatar";
 import { SheetSelect, type Opt } from "@/components/SheetSelect";
 import { STATUS_LABELS } from "@/lib/format";
-import type { ProjectDetail, ProjectView, Task, TaskStatus } from "@/lib/types";
+import type { ProjectDetail, ProjectView, Section, Task, TaskStatus } from "@/lib/types";
 
 const BOARD_COLS: TaskStatus[] = ["queued", "in_progress", "done"];
 
@@ -143,7 +143,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {active.map((t) => <TaskItem key={t.id} task={t} />)}
+          <SectionedTasks tasks={active} sections={detail?.sections ?? []} projectId={id} canManage={canManage} />
           {done.length > 0 && <h2 className="mt-4 px-1 text-xs uppercase tracking-wide text-muted">Готово</h2>}
           {done.map((t) => <TaskItem key={t.id} task={t} />)}
         </div>
@@ -151,6 +151,64 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
       {detail && <ProjectTeam projectId={id} detail={detail} canManage={canManage} />}
     </main>
+  );
+}
+
+function SectionedTasks({ tasks, sections, projectId, canManage }: { tasks: Task[]; sections: Section[]; projectId: string; canManage: boolean }) {
+  const [newName, setNewName] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const noSection = tasks.filter((t) => !t.sectionId);
+  const inSection = (sid: string) => tasks.filter((t) => t.sectionId === sid);
+
+  async function addSection() {
+    if (!newName.trim() || busy) return;
+    setBusy(true);
+    try {
+      await api(`/projects/${projectId}/sections`, { method: "POST", body: JSON.stringify({ name: newName.trim() }) });
+      setNewName("");
+      mutate(`/projects/${projectId}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function delSection(sid: string) {
+    if (!confirm("Удалить раздел? Задачи останутся, но выйдут из раздела.")) return;
+    await api(`/projects/${projectId}/sections/${sid}`, { method: "DELETE" });
+    mutate(`/projects/${projectId}`);
+    refreshTasks();
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      {noSection.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {noSection.map((t) => <TaskItem key={t.id} task={t} />)}
+        </div>
+      )}
+      {sections.map((s) => (
+        <div key={s.id} className="flex flex-col gap-2">
+          <div className="flex items-center justify-between px-1">
+            <h3 className="text-xs font-medium uppercase tracking-wide text-muted">{s.name} · {inSection(s.id).length}</h3>
+            {canManage && <button onClick={() => delSection(s.id)} className="text-xs text-muted">✕</button>}
+          </div>
+          {inSection(s.id).map((t) => <TaskItem key={t.id} task={t} />)}
+          {inSection(s.id).length === 0 && <p className="px-1 text-xs text-muted">пусто</p>}
+        </div>
+      ))}
+      {canManage && (
+        <div className="flex gap-2">
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addSection()}
+            placeholder="+ Раздел"
+            className="flex-1 rounded-xl bg-surface px-3 py-2 text-sm outline-none placeholder:text-muted"
+          />
+          {newName.trim() && <button onClick={addSection} disabled={busy} className="rounded-xl bg-accent px-4 text-sm text-white disabled:opacity-40">Добавить</button>}
+        </div>
+      )}
+    </div>
   );
 }
 

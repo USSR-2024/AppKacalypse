@@ -108,6 +108,19 @@ export const projectMembers = pgTable('project_members', {
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
+// project_sections — разделы внутри проекта (секции à la Todoist).
+// ─────────────────────────────────────────────────────────────────────────────
+export const projectSections = pgTable('project_sections', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  position: integer('position').notNull().default(0),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  projectIdx: index('project_sections_project_idx').on(t.projectId),
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
 // tasks — ядро. projectId null = личная или Inbox (различаем по isTriaged).
 //   Inbox     = isTriaged=false (ещё не разобрана, лежит во «Входящих»).
 //   Личная    = isTriaged=true  И projectId=null.
@@ -119,6 +132,7 @@ export const tasks = pgTable('tasks', {
   description: text('description').notNull().default(''),
 
   projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
+  sectionId: uuid('section_id').references(() => projectSections.id, { onDelete: 'set null' }),
   creatorId: uuid('creator_id').notNull().references(() => users.id),
   // Контролёр = ответственный за результат. По умолчанию = создатель (проставляется в коде/миграции).
   // Исполнители вынесены в task_assignees (несколько + внешние без аккаунта).

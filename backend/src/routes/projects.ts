@@ -9,6 +9,7 @@ projectRoutes.use('*', requireAuth);
 
 const p = schema.projects;
 const pm = schema.projectMembers;
+const ps = schema.projectSections;
 
 const isAdmin = (role: string) => role === 'admin' || role === 'owner';
 
@@ -68,7 +69,51 @@ projectRoutes.get('/:id', async (c) => {
     .innerJoin(schema.users, eq(schema.users.id, pm.userId))
     .where(eq(pm.projectId, id));
 
-  return c.json({ ...project, members });
+  const sections = await db.select().from(ps).where(eq(ps.projectId, id)).orderBy(ps.position);
+
+  return c.json({ ...project, members, sections });
+});
+
+// ── разделы (секции) проекта ────────────────────────────────────────────────────
+projectRoutes.post('/:id/sections', async (c) => {
+  const u = c.get('user');
+  const id = c.req.param('id');
+  const [project] = await db.select().from(p).where(eq(p.id, id)).limit(1);
+  if (!project) return c.json({ error: 'not_found' }, 404);
+  if (project.ownerId !== u.sub && !isAdmin(u.role)) return c.json({ error: 'forbidden' }, 403);
+
+  const parsed = z.object({ name: z.string().min(1).max(200) }).safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: 'bad_request' }, 400);
+
+  const existing = await db.select({ position: ps.position }).from(ps).where(eq(ps.projectId, id));
+  const pos = existing.length ? Math.max(...existing.map((e) => e.position)) + 1 : 0;
+  const [section] = await db.insert(ps).values({ projectId: id, name: parsed.data.name, position: pos }).returning();
+  return c.json(section, 201);
+});
+
+projectRoutes.patch('/:id/sections/:sectionId', async (c) => {
+  const u = c.get('user');
+  const id = c.req.param('id');
+  const [project] = await db.select().from(p).where(eq(p.id, id)).limit(1);
+  if (!project) return c.json({ error: 'not_found' }, 404);
+  if (project.ownerId !== u.sub && !isAdmin(u.role)) return c.json({ error: 'forbidden' }, 403);
+
+  const parsed = z.object({ name: z.string().min(1).max(200).optional(), position: z.number().int().optional() })
+    .safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: 'bad_request' }, 400);
+  const [section] = await db.update(ps).set(parsed.data).where(and(eq(ps.id, c.req.param('sectionId')), eq(ps.projectId, id))).returning();
+  return c.json(section);
+});
+
+projectRoutes.delete('/:id/sections/:sectionId', async (c) => {
+  const u = c.get('user');
+  const id = c.req.param('id');
+  const [project] = await db.select().from(p).where(eq(p.id, id)).limit(1);
+  if (!project) return c.json({ error: 'not_found' }, 404);
+  if (project.ownerId !== u.sub && !isAdmin(u.role)) return c.json({ error: 'forbidden' }, 403);
+  // задачи раздела автоматически получают section_id=null (FK on delete set null)
+  await db.delete(ps).where(and(eq(ps.id, c.req.param('sectionId')), eq(ps.projectId, id)));
+  return c.json({ ok: true });
 });
 
 // ── правка (owner проекта или admin) ────────────────────────────────────────────
