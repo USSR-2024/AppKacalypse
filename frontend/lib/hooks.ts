@@ -1,6 +1,6 @@
 import useSWR, { mutate } from "swr";
 import { fetcher } from "./api";
-import type { Task, Project, User } from "./types";
+import type { Task, Project, User, Comment } from "./types";
 
 export function useTasks(query: string) {
   return useSWR<Task[]>(`/tasks${query}`, fetcher);
@@ -16,6 +16,10 @@ export function useProjects() {
 
 export function useUsers() {
   return useSWR<User[]>("/users", fetcher);
+}
+
+export function useComments(taskId: string) {
+  return useSWR<Comment[]>(taskId ? `/tasks/${taskId}/comments` : null, fetcher);
 }
 
 /** Перечитать все списки задач после изменения. */

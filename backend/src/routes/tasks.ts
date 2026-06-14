@@ -5,6 +5,7 @@ import { db, schema } from '../db/index.js';
 import { requireAuth } from '../lib/auth-middleware.js';
 import { logActivity } from '../lib/activity.js';
 import { withAssignees, assignedTaskIds, isAssignee, replaceAssignees } from '../lib/assignees.js';
+import { notifyMentions } from '../lib/notify.js';
 import type { SessionClaims } from '../lib/jwt.js';
 
 export const taskRoutes = new Hono();
@@ -15,6 +16,16 @@ const PRIORITIES = ['low', 'normal', 'high'] as const;
 const SOURCES = ['app', 'telegram', 'email', 'calendar', 'ai'] as const;
 
 const t = schema.tasks;
+const tc = schema.taskComments;
+
+// Видит ли пользователь задачу (создатель/контролёр/исполнитель/член проекта; admin/owner — всё).
+async function canView(task: { id: string; creatorId: string; controllerId: string | null; projectId: string | null }, u: SessionClaims): Promise<boolean> {
+  if (u.role === 'owner' || u.role === 'admin') return true;
+  if (task.creatorId === u.sub || task.controllerId === u.sub) return true;
+  if (await isAssignee(task.id, u.sub)) return true;
+  if (task.projectId && (await myProjectIds(u.sub)).includes(task.projectId)) return true;
+  return false;
+}
 
 // Менять задачу может создатель, контролёр, любой исполнитель, admin/owner.
 async function canModify(task: { id: string; creatorId: string; controllerId: string | null }, u: SessionClaims): Promise<boolean> {
@@ -131,16 +142,68 @@ taskRoutes.get('/:id', async (c) => {
   const u = c.get('user');
   const [task] = await db.select().from(t).where(eq(t.id, c.req.param('id'))).limit(1);
   if (!task) return c.json({ error: 'not_found' }, 404);
-  if (u.role !== 'owner' && u.role !== 'admin') {
-    const visible =
-      task.creatorId === u.sub ||
-      task.controllerId === u.sub ||
-      (await isAssignee(task.id, u.sub)) ||
-      (!!task.projectId && (await myProjectIds(u.sub)).includes(task.projectId));
-    if (!visible) return c.json({ error: 'not_found' }, 404);
-  }
+  if (!(await canView(task, u))) return c.json({ error: 'not_found' }, 404);
   const [withA] = await withAssignees([task]);
   return c.json(withA);
+});
+
+// ── комментарии задачи ────────────────────────────────────────────────────────
+taskRoutes.get('/:id/comments', async (c) => {
+  const u = c.get('user');
+  const [task] = await db.select().from(t).where(eq(t.id, c.req.param('id'))).limit(1);
+  if (!task) return c.json({ error: 'not_found' }, 404);
+  if (!(await canView(task, u))) return c.json({ error: 'not_found' }, 404);
+
+  const rows = await db
+    .select({
+      id: tc.id,
+      body: tc.body,
+      mentions: tc.mentions,
+      createdAt: tc.createdAt,
+      authorId: tc.authorId,
+      authorName: schema.users.displayName,
+      authorAvatar: schema.users.avatarUrl,
+    })
+    .from(tc)
+    .innerJoin(schema.users, eq(schema.users.id, tc.authorId))
+    .where(eq(tc.taskId, task.id))
+    .orderBy(asc(tc.createdAt))
+    .limit(500);
+  return c.json(rows);
+});
+
+taskRoutes.post('/:id/comments', async (c) => {
+  const u = c.get('user');
+  const [task] = await db.select().from(t).where(eq(t.id, c.req.param('id'))).limit(1);
+  if (!task) return c.json({ error: 'not_found' }, 404);
+  if (!(await canView(task, u))) return c.json({ error: 'not_found' }, 404);
+
+  const p = z.object({
+    body: z.string().min(1).max(2000),
+    mentions: z.array(z.string().uuid()).optional(),
+  }).safeParse(await c.req.json().catch(() => null));
+  if (!p.success) return c.json({ error: 'bad_request' }, 400);
+  const mentions = p.data.mentions ?? [];
+
+  const [me] = await db
+    .select({ name: schema.users.displayName, avatar: schema.users.avatarUrl })
+    .from(schema.users)
+    .where(eq(schema.users.id, u.sub))
+    .limit(1);
+
+  const [created] = await db.insert(tc).values({ taskId: task.id, authorId: u.sub, body: p.data.body, mentions }).returning();
+  await logActivity({ taskId: task.id, actorId: u.sub, type: 'commented' });
+  await notifyMentions(task.id, task.title, me?.name ?? 'Кто-то', p.data.body, mentions, u.sub);
+
+  return c.json({
+    id: created!.id,
+    body: created!.body,
+    mentions: created!.mentions,
+    createdAt: created!.createdAt,
+    authorId: u.sub,
+    authorName: me?.name ?? '',
+    authorAvatar: me?.avatar ?? null,
+  }, 201);
 });
 
 // ── правка полей ──────────────────────────────────────────────────────────────

@@ -175,6 +175,21 @@ export const taskActivity = pgTable('task_activity', {
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
+// task_comments — обсуждение/«работы» под задачей. mentions = userId[] упомянутых
+// (@упоминание → уведомление). Закрывает «добавить нюансы/что сделано» по задаче.
+// ─────────────────────────────────────────────────────────────────────────────
+export const taskComments = pgTable('task_comments', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  taskId: uuid('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+  authorId: uuid('author_id').notNull().references(() => users.id),
+  body: text('body').notNull(),
+  mentions: jsonb('mentions').notNull().default([]),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  taskIdx: index('task_comments_task_idx').on(t.taskId),
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
 // bot_sessions — состояние доспроса в Telegram (1 незавершённый черновик на чат).
 // ─────────────────────────────────────────────────────────────────────────────
 export const botSessions = pgTable('bot_sessions', {

@@ -10,6 +10,16 @@ export interface Assignee {
   avatarUrl: string | null;
 }
 
+export interface Comment {
+  id: string;
+  body: string;
+  mentions: string[];
+  createdAt: string;
+  authorId: string;
+  authorName: string;
+  authorAvatar: string | null;
+}
+
 export interface Task {
   id: string;
   title: string;
