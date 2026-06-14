@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from app.config import config
 from app.providers import get_provider
 from app.redaction import redact
-from app.schemas import ExtractRequest, ExtractResult, Intent
+from app.schemas import AnnounceRequest, AnnounceResult, ExtractRequest, ExtractResult, Intent
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("llm-gateway")
@@ -83,3 +83,20 @@ async def extract(req: ExtractRequest) -> ExtractResult:
         raise HTTPException(status_code=422, detail="missing_tasks")
 
     return _apply_confirmation(result)
+
+
+@app.post("/announce", response_model=AnnounceResult)
+async def announce(req: AnnounceRequest) -> AnnounceResult:
+    """Сырые пункты изменений → краткое уведомление об обновлении (title + body)."""
+    if not req.changes:
+        raise HTTPException(status_code=400, detail="no_changes")
+    log.info("announce changes=%d", len(req.changes))
+    try:
+        raw = await provider.announce(req.changes)
+    except Exception as e:  # noqa: BLE001
+        log.error("announce provider error: %s", redact(str(e)))
+        raise HTTPException(status_code=502, detail="llm_unavailable")
+    try:
+        return AnnounceResult(**raw)
+    except ValidationError:
+        raise HTTPException(status_code=422, detail="invalid_llm_output")

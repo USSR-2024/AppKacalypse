@@ -3,26 +3,57 @@ import { useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/store";
-import { useUsers, useBroadcasts } from "@/lib/hooks";
+import { useUsers, useBroadcasts, useChangelog } from "@/lib/hooks";
 
 export default function BroadcastPage() {
   const me = useAuth((s) => s.me);
   const { data: users } = useUsers();
   const { data: history, mutate } = useBroadcasts();
+  const { data: changes, mutate: mutateChanges } = useChangelog();
 
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [tg, setTg] = useState(true);
   const [push, setPush] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [drafting, setDrafting] = useState(false);
+  const [newChange, setNewChange] = useState("");
   const [note, setNote] = useState("");
 
   const isPriv = me?.role === "owner" || me?.role === "admin";
   const total = users?.length ?? 0;
   const channels = [tg && "telegram", push && "push"].filter(Boolean) as string[];
+  const changeCount = changes?.length ?? 0;
 
   if (me && !isPriv) {
     return <main className="px-4 pt-12 text-muted">Доступно только администраторам.</main>;
+  }
+
+  async function generateDraft() {
+    if (drafting) return;
+    setDrafting(true);
+    setNote("");
+    try {
+      const r = await api<{ title: string; body: string }>("/broadcast/draft", { method: "POST", body: JSON.stringify({}) });
+      setTitle(r.title);
+      setBody(r.body);
+      setNote("Черновик готов — проверьте и при необходимости поправьте.");
+    } catch {
+      setNote("Не удалось сгенерировать черновик (модель недоступна?). Можно написать вручную.");
+    } finally {
+      setDrafting(false);
+    }
+  }
+
+  async function addChange() {
+    if (!newChange.trim()) return;
+    await api("/broadcast/changelog", { method: "POST", body: JSON.stringify({ text: newChange.trim() }) });
+    setNewChange("");
+    mutateChanges();
+  }
+  async function removeChange(id: string) {
+    await api(`/broadcast/changelog/${id}`, { method: "DELETE" });
+    mutateChanges();
   }
 
   async function send(selfOnly: boolean) {
@@ -48,6 +79,7 @@ export default function BroadcastPage() {
       } else {
         setNote(`Разослано: ${r.recipients} получателей (Telegram: ${r.telegram}).`);
         mutate();
+        mutateChanges();
       }
     } catch {
       setNote("Не удалось отправить. Попробуйте ещё раз.");
@@ -63,6 +95,42 @@ export default function BroadcastPage() {
         <h1 className="text-2xl font-semibold">📣 Уведомить об обновлении</h1>
         <p className="mt-1 text-sm text-muted">Ручная рассылка всем пользователям. Только для крупных апдейтов.</p>
       </header>
+
+      {/* Неуведомлённые изменения + автогенерация черновика */}
+      <section className="mb-5 rounded-2xl bg-surface-2/50 p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-sm font-medium">Новые изменения · {changeCount}</span>
+          <button
+            onClick={generateDraft}
+            disabled={drafting || changeCount === 0}
+            className="rounded-xl bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
+          >
+            {drafting ? "Готовлю…" : "✨ Сгенерировать черновик"}
+          </button>
+        </div>
+        {changeCount > 0 ? (
+          <div className="mb-2 flex flex-col gap-1">
+            {changes!.map((ch) => (
+              <div key={ch.id} className="flex items-start gap-2 text-xs text-muted">
+                <span className="flex-1">• {ch.text}</span>
+                <button onClick={() => removeChange(ch.id)} className="shrink-0">✕</button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mb-2 text-xs text-muted">Пунктов с прошлой рассылки нет. Можно добавить вручную ниже или написать текст сам.</p>
+        )}
+        <div className="flex gap-2">
+          <input
+            value={newChange}
+            onChange={(e) => setNewChange(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addChange()}
+            placeholder="+ добавить пункт изменения"
+            className="flex-1 rounded-lg bg-surface px-2.5 py-2 text-xs outline-none placeholder:text-muted"
+          />
+          {newChange.trim() && <button onClick={addChange} className="rounded-lg bg-surface px-3 text-xs">Добавить</button>}
+        </div>
+      </section>
 
       <div className="flex flex-col gap-2">
         <input

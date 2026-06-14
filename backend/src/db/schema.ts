@@ -263,6 +263,17 @@ export const teamMembers = pgTable('team_members', {
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
+// changelog — журнал изменений приложения. announcedAt=null → ещё не уведомляли.
+// Из неуведомлённых пунктов LLM готовит черновик рассылки.
+// ─────────────────────────────────────────────────────────────────────────────
+export const changelog = pgTable('changelog', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  text: text('text').notNull(),
+  announcedAt: timestamp('announced_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // broadcasts — история ручных рассылок «уведомление об обновлении» (owner/admin).
 // ─────────────────────────────────────────────────────────────────────────────
 export const broadcasts = pgTable('broadcasts', {

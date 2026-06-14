@@ -24,6 +24,7 @@ class OllamaProvider(LLMProvider):
     def __init__(self) -> None:
         self.system = _load("task_extraction_system.md")
         self.user_template = _load("task_extraction_user_template.md")
+        self.announce_system = _load("announce_system.md")
 
     def _build_user(self, req: ExtractRequest, now_iso: str) -> str:
         return (
@@ -46,6 +47,26 @@ class OllamaProvider(LLMProvider):
             "messages": [
                 {"role": "system", "content": self.system},
                 {"role": "user", "content": self._build_user(req, now_iso)},
+            ],
+        }
+        async with httpx.AsyncClient(timeout=config.REQUEST_TIMEOUT) as client:
+            resp = await client.post(f"{config.OLLAMA_BASE_URL}/api/chat", json=payload)
+            resp.raise_for_status()
+            content = resp.json()["message"]["content"]
+        return json.loads(content)
+
+    async def announce(self, changes: list[str]) -> dict:
+        user = "Изменения:\n" + "\n".join(f"- {c}" for c in changes)
+        payload = {
+            "model": config.OLLAMA_MODEL,
+            "stream": False,
+            "format": "json",
+            "think": False,
+            "keep_alive": config.KEEP_ALIVE,
+            "options": {"temperature": 0.3},
+            "messages": [
+                {"role": "system", "content": self.announce_system},
+                {"role": "user", "content": user},
             ],
         }
         async with httpx.AsyncClient(timeout=config.REQUEST_TIMEOUT) as client:

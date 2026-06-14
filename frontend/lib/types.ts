@@ -93,6 +93,13 @@ export interface Broadcast {
   senderName: string;
 }
 
+export interface ChangelogEntry {
+  id: string;
+  text: string;
+  announcedAt: string | null;
+  createdAt: string;
+}
+
 export interface User {
   id: string;
   displayName: string;

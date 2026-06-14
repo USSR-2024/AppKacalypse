@@ -1,6 +1,6 @@
 import useSWR, { mutate } from "swr";
 import { fetcher } from "./api";
-import type { Task, Project, ProjectDetail, User, Comment, Team, Broadcast } from "./types";
+import type { Task, Project, ProjectDetail, User, Comment, Team, Broadcast, ChangelogEntry } from "./types";
 
 export function useTasks(query: string) {
   return useSWR<Task[]>(`/tasks${query}`, fetcher);
@@ -24,6 +24,10 @@ export function useTeams() {
 
 export function useBroadcasts() {
   return useSWR<Broadcast[]>("/broadcast", fetcher);
+}
+
+export function useChangelog() {
+  return useSWR<ChangelogEntry[]>("/broadcast/changelog", fetcher);
 }
 
 export function useUsers() {

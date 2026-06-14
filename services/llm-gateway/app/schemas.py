@@ -93,3 +93,13 @@ class ExtractResult(_DropNulls):
     note: Optional[str] = None
     questions: List[str] = Field(default_factory=list)
     needs_confirmation: bool = True
+
+
+class AnnounceRequest(BaseModel):
+    """Список сырых изменений → краткое уведомление об обновлении для пользователей."""
+    changes: List[str] = Field(default_factory=list)
+
+
+class AnnounceResult(_DropNulls):
+    title: str = "🚀 Обновление"
+    body: str = ""

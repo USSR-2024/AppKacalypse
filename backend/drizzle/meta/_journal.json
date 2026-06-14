@@ -64,6 +64,13 @@
       "when": 1781448668165,
       "tag": "0008_next_hobgoblin",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1781450178072,
+      "tag": "0009_hesitant_morlocks",
+      "breakpoints": true
     }
   ]
 }
