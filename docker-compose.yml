@@ -1,6 +1,6 @@
 # AppKacalypse — единый стек (one-server).
 # GPU нужен только сервису ollama (nvidia-container-toolkit).
-# Для dev без GPU: docker compose up -d postgres valkey llm-gateway
+# Для dev без GPU: docker compose up -d postgres llm-gateway
 #   и LLM_PROVIDER=mock.
 
 services:
@@ -17,11 +17,7 @@ services:
       - caddy-config:/config
     environment:
       DOMAIN_TASKS: ${DOMAIN_TASKS}
-      DOMAIN_N8N: ${DOMAIN_N8N}
       ACME_EMAIL: ${ACME_EMAIL}
-    depends_on:
-      - vikunja
-      - n8n
 
   postgres:
     image: postgres:16-alpine
@@ -37,62 +33,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
-  valkey:
-    image: valkey/valkey:8-alpine
-    restart: unless-stopped
-    command: ["valkey-server", "--save", "60", "1", "--appendonly", "no"]
-    volumes:
-      - valkey-data:/data
-    healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  vikunja:
-    image: vikunja/vikunja:latest
-    restart: unless-stopped
-    environment:
-      VIKUNJA_DATABASE_TYPE: postgres
-      VIKUNJA_DATABASE_HOST: postgres
-      VIKUNJA_DATABASE_DATABASE: ${POSTGRES_DB}
-      VIKUNJA_DATABASE_USER: ${POSTGRES_USER}
-      VIKUNJA_DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
-      VIKUNJA_SERVICE_SECRET: ${VIKUNJA_JWT_SECRET}
-      VIKUNJA_SERVICE_PUBLICURL: ${VIKUNJA_SERVICE_PUBLICURL}
-      VIKUNJA_SERVICE_TIMEZONE: ${TZ}
-      VIKUNJA_DEFAULTSETTINGS_LANGUAGE: "ru-RU"
-    user: "1000:1000"
-    volumes:
-      - vikunja-data:/app/vikunja/files
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  n8n:
-    image: n8nio/n8n:latest
-    restart: unless-stopped
-    environment:
-      N8N_HOST: ${N8N_HOST}
-      N8N_PROTOCOL: ${N8N_PROTOCOL}
-      N8N_PORT: 5678
-      WEBHOOK_URL: https://${DOMAIN_N8N}/
-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
-      N8N_BASIC_AUTH_ACTIVE: ${N8N_BASIC_AUTH_ACTIVE}
-      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER}
-      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
-      DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: postgres
-      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
-      DB_POSTGRESDB_USER: ${POSTGRES_USER}
-      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
-      GENERIC_TIMEZONE: ${TZ}
-    volumes:
-      - n8n-data:/home/node/.n8n
-    depends_on:
-      postgres:
-        condition: service_healthy
 
   llm-gateway:
     build: ./services/llm-gateway
@@ -143,7 +83,4 @@ volumes:
   caddy-data:
   caddy-config:
   postgres-data:
-  valkey-data:
-  vikunja-data:
-  n8n-data:
   ollama-data:
