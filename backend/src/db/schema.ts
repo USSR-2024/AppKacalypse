@@ -263,6 +263,19 @@ export const teamMembers = pgTable('team_members', {
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
+// broadcasts — история ручных рассылок «уведомление об обновлении» (owner/admin).
+// ─────────────────────────────────────────────────────────────────────────────
+export const broadcasts = pgTable('broadcasts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  title: text('title').notNull(),
+  body: text('body').notNull(),
+  senderId: uuid('sender_id').notNull().references(() => users.id),
+  channels: jsonb('channels').notNull().default([]),
+  recipientCount: integer('recipient_count').notNull().default(0),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // push_subscriptions — Web Push (PWA). Один user → много устройств.
 // ─────────────────────────────────────────────────────────────────────────────
 export const pushSubscriptions = pgTable('push_subscriptions', {

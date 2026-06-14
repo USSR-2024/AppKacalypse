@@ -163,10 +163,16 @@ export default function ProfilePage() {
       </Link>
 
       {(draft.role === "owner" || draft.role === "admin") && (
-        <Link href="/users" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
-          <span>⚙️ Управление пользователями</span>
-          <span className="text-muted">›</span>
-        </Link>
+        <>
+          <Link href="/broadcast" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
+            <span>📣 Уведомить об обновлении</span>
+            <span className="text-muted">›</span>
+          </Link>
+          <Link href="/users" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
+            <span>⚙️ Управление пользователями</span>
+            <span className="text-muted">›</span>
+          </Link>
+        </>
       )}
 
       <button onClick={logout} className="w-full rounded-2xl bg-surface px-4 py-3.5 text-left text-danger">

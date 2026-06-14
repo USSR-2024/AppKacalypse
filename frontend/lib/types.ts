@@ -83,6 +83,16 @@ export interface Team {
   members: TeamMember[];
 }
 
+export interface Broadcast {
+  id: string;
+  title: string;
+  body: string;
+  channels: string[];
+  recipientCount: number;
+  createdAt: string;
+  senderName: string;
+}
+
 export interface User {
   id: string;
   displayName: string;
