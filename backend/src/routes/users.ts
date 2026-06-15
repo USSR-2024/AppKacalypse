@@ -32,32 +32,8 @@ userRoutes.get('/admin', async (c) => {
   return c.json(rows);
 });
 
-// ── админ: блокировка / смена роли ──────────────────────────────────────────────
-const adminPatchSchema = z.object({
-  isActive: z.boolean().optional(),
-  role: z.enum(['admin', 'member']).optional(),
-});
-userRoutes.patch('/:id', async (c) => {
-  const me = c.get('user');
-  if (!isPriv(me.role)) return c.json({ error: 'forbidden' }, 403);
-  const id = c.req.param('id');
-  if (id === me.sub) return c.json({ error: 'self_forbidden' }, 400);
-
-  const [target] = await db.select({ role: u.role }).from(u).where(eq(u.id, id)).limit(1);
-  if (!target) return c.json({ error: 'not_found' }, 404);
-  if (target.role === 'owner') return c.json({ error: 'forbidden' }, 403); // owner неприкосновенен
-
-  const body = await c.req.json().catch(() => null);
-  const p = adminPatchSchema.safeParse(body);
-  if (!p.success || (p.data.isActive === undefined && p.data.role === undefined)) return c.json({ error: 'bad_request' }, 400);
-  if (p.data.role !== undefined && me.role !== 'owner') return c.json({ error: 'forbidden' }, 403); // роли меняет только owner
-
-  const [updated] = await db.update(u).set({ ...p.data, updatedAt: new Date() }).where(eq(u.id, id))
-    .returning({ id: u.id, displayName: u.displayName, avatarUrl: u.avatarUrl, role: u.role, isActive: u.isActive, createdAt: u.createdAt });
-  return c.json(updated);
-});
-
 // ── обновление своих настроек ────────────────────────────────────────────────────
+// ВАЖНО: статический '/me' должен идти ДО '/:id' — иначе Hono матчит '/me' на '/:id' (id='me').
 const updateMeSchema = z.object({
   displayName: z.string().min(1).max(200).optional(),
   timezone: z.string().max(64).optional(),
@@ -80,9 +56,34 @@ userRoutes.patch('/me', async (c) => {
     .set({ ...parsed.data, updatedAt: new Date() })
     .where(eq(u.id, me.sub))
     .returning({
-      id: u.id, displayName: u.displayName, role: u.role, timezone: u.timezone,
+      id: u.id, displayName: u.displayName, avatarUrl: u.avatarUrl, role: u.role, timezone: u.timezone,
       lang: u.lang, projectView: u.projectView, notifyMorning: u.notifyMorning, notifyEvening: u.notifyEvening,
       morningTime: u.morningTime, eveningTime: u.eveningTime, notifyChannels: u.notifyChannels,
     });
+  return c.json(updated);
+});
+
+// ── админ: блокировка / смена роли ──────────────────────────────────────────────
+const adminPatchSchema = z.object({
+  isActive: z.boolean().optional(),
+  role: z.enum(['admin', 'member']).optional(),
+});
+userRoutes.patch('/:id', async (c) => {
+  const me = c.get('user');
+  if (!isPriv(me.role)) return c.json({ error: 'forbidden' }, 403);
+  const id = c.req.param('id');
+  if (id === me.sub) return c.json({ error: 'self_forbidden' }, 400);
+
+  const [target] = await db.select({ role: u.role }).from(u).where(eq(u.id, id)).limit(1);
+  if (!target) return c.json({ error: 'not_found' }, 404);
+  if (target.role === 'owner') return c.json({ error: 'forbidden' }, 403); // owner неприкосновенен
+
+  const body = await c.req.json().catch(() => null);
+  const p = adminPatchSchema.safeParse(body);
+  if (!p.success || (p.data.isActive === undefined && p.data.role === undefined)) return c.json({ error: 'bad_request' }, 400);
+  if (p.data.role !== undefined && me.role !== 'owner') return c.json({ error: 'forbidden' }, 403); // роли меняет только owner
+
+  const [updated] = await db.update(u).set({ ...p.data, updatedAt: new Date() }).where(eq(u.id, id))
+    .returning({ id: u.id, displayName: u.displayName, avatarUrl: u.avatarUrl, role: u.role, isActive: u.isActive, createdAt: u.createdAt });
   return c.json(updated);
 });
