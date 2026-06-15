@@ -104,7 +104,10 @@ export default function AssistantPage() {
         <div ref={endRef} />
       </div>
 
-      <div className="fixed inset-x-0 bottom-[58px] z-30 mx-auto max-w-md border-t border-border bg-surface/95 p-3 backdrop-blur">
+      <div
+        style={{ bottom: "calc(env(safe-area-inset-bottom) + 58px)" }}
+        className="fixed inset-x-0 z-30 mx-auto max-w-md border-t border-border bg-surface/95 p-3 backdrop-blur"
+      >
         <div className="flex items-end gap-2">
           <textarea
             value={text}

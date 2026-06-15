@@ -19,7 +19,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const setMe = useAuth((s) => s.setMe);
   const [ready, setReady] = useState(false);
   const [composer, setComposer] = useState(false);
-  const hideFab = pathname.startsWith("/assistant");
+  // Прячем FAB на ассистенте (свой ввод) и в карточке задачи (перекрывал кнопку отправки коммента).
+  const hideFab = pathname.startsWith("/assistant") || pathname.startsWith("/tasks/");
 
   useEffect(() => {
     if (!token) router.replace("/login");
@@ -39,18 +40,25 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col">
-      <Link href="/profile" className="fixed right-4 top-4 z-30" aria-label="Профиль">
+      <Link
+        href="/profile"
+        className="fixed right-2 z-30 p-2"
+        style={{ top: "calc(env(safe-area-inset-top) + 0.5rem)" }}
+        aria-label="Профиль"
+      >
         <Avatar src={me?.avatarUrl} name={me?.displayName} className="h-9 w-9 bg-surface text-sm" />
       </Link>
 
-      <div className="flex-1 pb-24">
+      {/* +1rem сверху, чтобы первая строка контента была ниже плавающей кнопки профиля (не перекрывалась). */}
+      <div className="flex-1 pb-24" style={{ paddingTop: "calc(env(safe-area-inset-top) + 1rem)" }}>
         <PullToRefresh>{children}</PullToRefresh>
       </div>
 
       {!hideFab && (
         <button
           onClick={() => setComposer(true)}
-          className="fixed bottom-20 right-1/2 z-40 flex h-14 w-14 translate-x-[calc(min(50vw,28rem/2)-1rem)] items-center justify-center rounded-full bg-accent text-3xl text-white shadow-lg shadow-accent/30 active:scale-95"
+          style={{ bottom: "calc(env(safe-area-inset-bottom) + 5rem)" }}
+          className="fixed right-1/2 z-40 flex h-14 w-14 translate-x-[calc(min(50vw,28rem/2)-1rem)] items-center justify-center rounded-full bg-accent text-3xl text-white shadow-lg shadow-accent/30 active:scale-95"
           aria-label="Новая задача"
         >
           +
