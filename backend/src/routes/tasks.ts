@@ -4,8 +4,8 @@ import { z } from 'zod';
 import { db, schema } from '../db/index.js';
 import { requireAuth } from '../lib/auth-middleware.js';
 import { logActivity } from '../lib/activity.js';
-import { withAssignees, assignedTaskIds, isAssignee, replaceAssignees } from '../lib/assignees.js';
-import { notifyMentions } from '../lib/notify.js';
+import { withAssignees, assignedTaskIds, isAssignee, replaceAssignees, loadAssignees } from '../lib/assignees.js';
+import { notifyMentions, notifyAssigned } from '../lib/notify.js';
 import type { SessionClaims } from '../lib/jwt.js';
 
 export const taskRoutes = new Hono();
@@ -100,6 +100,10 @@ taskRoutes.post('/', async (c) => {
   });
 
   await logActivity({ taskId: task.id, actorId: u.sub, type: 'created' });
+  if (d.assigneeIds?.length) {
+    const [actor] = await db.select({ name: schema.users.displayName }).from(schema.users).where(eq(schema.users.id, u.sub)).limit(1);
+    await notifyAssigned(task.id, task.title, actor?.name ?? 'Кто-то', d.assigneeIds, u.sub);
+  }
   const [withA] = await withAssignees([task]);
   return c.json(withA, 201);
 });
@@ -254,8 +258,15 @@ taskRoutes.patch('/:id', async (c) => {
 
   // Замена набора исполнителей (если переданы).
   if (d.assigneeIds !== undefined || d.externalAssignees !== undefined) {
+    const before = (await loadAssignees([id])).get(id) ?? [];
+    const oldIds = new Set(before.map((a) => a.userId).filter(Boolean) as string[]);
     await replaceAssignees(db, id, d.assigneeIds ?? [], d.externalAssignees ?? []);
     await logActivity({ taskId: id, actorId: u.sub, type: 'assigned' });
+    const added = (d.assigneeIds ?? []).filter((uid) => !oldIds.has(uid));
+    if (added.length) {
+      const [actor] = await db.select({ name: schema.users.displayName }).from(schema.users).where(eq(schema.users.id, u.sub)).limit(1);
+      await notifyAssigned(id, updated!.title, actor?.name ?? 'Кто-то', added, u.sub);
+    }
   }
   if (d.isTriaged === true && task.isTriaged === false) {
     await logActivity({ taskId: id, actorId: u.sub, type: 'triaged', payload: { projectId: updated!.projectId } });

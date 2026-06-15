@@ -45,3 +45,37 @@ export async function notifyMentions(
     url: `/tasks/${taskId}`,
   });
 }
+
+/**
+ * Уведомить исполнителей о поставленной задаче. Каналы — Telegram + push.
+ * assignerId исключается (не уведомляем того, кто сам назначил/создал).
+ */
+export async function notifyAssigned(
+  taskId: string,
+  taskTitle: string,
+  assignerName: string,
+  assigneeUserIds: string[],
+  assignerId: string,
+): Promise<void> {
+  const targets = [...new Set(assigneeUserIds)].filter((id) => id && id !== assignerId);
+  if (!targets.length) return;
+
+  const idents = await db
+    .select({ externalId: schema.authIdentities.externalId })
+    .from(schema.authIdentities)
+    .where(and(eq(schema.authIdentities.provider, "telegram"), inArray(schema.authIdentities.userId, targets)));
+
+  const text =
+    `📌 <b>${esc(assignerName)}</b> поставил вам задачу:\n` +
+    `«${esc(taskTitle)}»\n\nОзнакомьтесь: ${APP_URL}/tasks/${taskId}`;
+
+  for (const i of idents) {
+    await sendMessage(i.externalId, text);
+  }
+
+  await sendPush(targets, {
+    title: "📌 Новая задача",
+    body: `${assignerName}: ${taskTitle}`,
+    url: `/tasks/${taskId}`,
+  });
+}

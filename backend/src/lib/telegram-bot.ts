@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { db, schema } from "../db/index.js";
 import { findOrCreateUser } from "./users.js";
 import { logActivity } from "./activity.js";
+import { notifyAssigned } from "./notify.js";
 import {
   gatewayExtract,
   loadResolvers,
@@ -298,6 +299,9 @@ export async function processUpdate(update: TgUpdate): Promise<void> {
       .returning();
     await db.insert(schema.taskAssignees).values({ taskId: task!.id, userId: assigneeId });
     await logActivity({ taskId: task!.id, actorId: user.id, type: "created" });
+    if (assigneeId !== user.id) {
+      await notifyAssigned(task!.id, task!.title, user.displayName, [assigneeId], user.id);
+    }
     const due = task!.dueAt ? ` — 🕑 ${fmtDate(task!.dueAt, tz)}` : "";
     lines.push(`✅ <b>${esc(task!.title)}</b>${due}${projectId ? "" : "  📥 во Входящих"}`);
   }
