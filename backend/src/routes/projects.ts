@@ -142,6 +142,35 @@ projectRoutes.patch('/:id', async (c) => {
   return c.json(updated);
 });
 
+// ── архив (любой участник проекта; admin/owner — всегда) ─────────────────────────
+projectRoutes.post('/:id/archive', async (c) => {
+  const u = c.get('user');
+  const id = c.req.param('id');
+  const [project] = await db.select().from(p).where(eq(p.id, id)).limit(1);
+  if (!project) return c.json({ error: 'not_found' }, 404);
+  if (!isAdmin(u.role)) {
+    const [m] = await db.select({ id: pm.id }).from(pm).where(and(eq(pm.projectId, id), eq(pm.userId, u.sub))).limit(1);
+    if (!m) return c.json({ error: 'forbidden' }, 403);
+  }
+  const parsed = z.object({ archived: z.boolean() }).safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: 'bad_request' }, 400);
+  const [updated] = await db.update(p).set({ isArchived: parsed.data.archived, updatedAt: new Date() }).where(eq(p.id, id)).returning();
+  return c.json(updated);
+});
+
+// ── удаление (только admin/owner) ────────────────────────────────────────────────
+// Каскад: участники и разделы удаляются (FK cascade); задачи проекта остаются,
+// но project_id обнуляется (FK set null) — становятся личными у создателей.
+projectRoutes.delete('/:id', async (c) => {
+  const u = c.get('user');
+  if (!isAdmin(u.role)) return c.json({ error: 'forbidden' }, 403);
+  const id = c.req.param('id');
+  const [project] = await db.select().from(p).where(eq(p.id, id)).limit(1);
+  if (!project) return c.json({ error: 'not_found' }, 404);
+  await db.delete(p).where(eq(p.id, id));
+  return c.json({ ok: true });
+});
+
 // ── участники ──────────────────────────────────────────────────────────────────
 projectRoutes.post('/:id/members', async (c) => {
   const u = c.get('user');

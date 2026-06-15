@@ -18,6 +18,11 @@ export function useProjectDetail(id: string) {
   return useSWR<ProjectDetail>(id ? `/projects/${id}` : null, fetcher);
 }
 
+/** Включая архивные — для раздела «Архив». */
+export function useAllProjects(enabled: boolean) {
+  return useSWR<Project[]>(enabled ? "/projects?archived=1" : null, fetcher);
+}
+
 export function useTeams() {
   return useSWR<Team[]>("/teams", fetcher);
 }
