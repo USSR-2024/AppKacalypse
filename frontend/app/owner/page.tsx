@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { api, fetcher } from "@/lib/api";
 import { useAuth } from "@/lib/store";
 import { wsRoleLabel } from "@/lib/roles";
+import { useTheme } from "@/lib/theme";
 import { Avatar } from "@/components/Avatar";
 import type { Me } from "@/lib/types";
 
@@ -75,7 +76,10 @@ function OwnerConsole() {
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 px-5 py-10">
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Owner-консоль</h1>
-        <a href="/" className="text-sm text-muted underline">В приложение</a>
+        <div className="flex items-center gap-3">
+          <ThemeBtn />
+          <a href="/" className="text-sm text-muted underline">В приложение</a>
+        </div>
       </header>
 
       {/* Создание пространства */}
@@ -116,6 +120,15 @@ function OwnerConsole() {
         {workspaces && workspaces.length === 0 && <p className="px-1 text-sm text-muted">Пространств пока нет.</p>}
       </section>
     </main>
+  );
+}
+
+function ThemeBtn() {
+  const { theme, toggle } = useTheme();
+  return (
+    <button onClick={toggle} className="rounded-lg bg-surface px-2.5 py-1.5 text-sm" title="Сменить тему">
+      {theme === "dark" ? "🌙" : "☀️"}
+    </button>
   );
 }
 

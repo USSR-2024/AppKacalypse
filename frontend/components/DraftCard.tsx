@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { refreshTasks, useProjects, useUsers } from "@/lib/hooks";
+import { WsLink } from "./WsLink";
 import { SheetSelect, type Opt } from "./SheetSelect";
 import { AssigneePicker } from "./AssigneePicker";
 import type { Priority } from "@/lib/types";
@@ -43,6 +44,7 @@ export function DraftCard({ draft, onCreated }: { draft: Draft; onCreated?: () =
   const [priority, setPriority] = useState<Priority>(draft.priority);
   const [important, setImportant] = useState(false);
   const [created, setCreated] = useState(false);
+  const [createdId, setCreatedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const projectOpts: Opt[] = (projects ?? []).map((p) => ({ value: p.id, label: p.name, color: p.color || "#4f8cff" }));
@@ -51,7 +53,7 @@ export function DraftCard({ draft, onCreated }: { draft: Draft; onCreated?: () =
     if (!title.trim()) return;
     setBusy(true);
     try {
-      await api("/tasks", {
+      const task = await api<{ id: string }>("/tasks", {
         method: "POST",
         body: JSON.stringify({
           title: title.trim(),
@@ -66,6 +68,7 @@ export function DraftCard({ draft, onCreated }: { draft: Draft; onCreated?: () =
         }),
       });
       refreshTasks();
+      setCreatedId(task.id);
       setCreated(true);
       onCreated?.();
     } finally {
@@ -75,8 +78,13 @@ export function DraftCard({ draft, onCreated }: { draft: Draft; onCreated?: () =
 
   if (created) {
     return (
-      <div className="mt-2 rounded-2xl border border-ok/40 bg-ok/10 px-3.5 py-3 text-sm text-ok">
-        ✓ Создана: {title}
+      <div className="mt-2 flex items-center justify-between gap-2 rounded-2xl border border-ok/40 bg-ok/10 px-3.5 py-3 text-sm text-ok">
+        <span className="min-w-0 truncate">✓ Создана: {title}</span>
+        {createdId && (
+          <WsLink href={`/tasks/${createdId}`} className="shrink-0 rounded-lg bg-ok/20 px-3 py-1 font-medium">
+            Открыть →
+          </WsLink>
+        )}
       </div>
     );
   }

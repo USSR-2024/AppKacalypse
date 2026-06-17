@@ -20,13 +20,12 @@ export function ConfirmSheet({
   useBackClose(true, onCancel);
 
   return (
-    <div className="fixed inset-0 z-[70] flex flex-col justify-end bg-black/50" onClick={onCancel}>
+    <div className="fixed inset-0 z-[70] flex flex-col justify-end bg-black/50 lg:items-center lg:justify-center" onClick={onCancel}>
       <div
-        className="mx-auto w-full max-w-md rounded-t-3xl bg-surface-2 p-5"
-        style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 1.5rem)" }}
+        className="mx-auto w-full max-w-md rounded-t-3xl bg-surface-2 p-5 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] lg:max-w-sm lg:rounded-3xl lg:pb-5 lg:shadow-[var(--shadow-strong)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-border" />
+        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-border lg:hidden" />
         <p className="text-lg font-medium">{title}</p>
         {message && <p className="mt-1 text-sm text-muted">{message}</p>}
         <div className="mt-5 flex gap-2">

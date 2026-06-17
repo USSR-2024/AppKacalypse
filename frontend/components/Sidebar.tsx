@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { useAuth } from "@/lib/store";
 import { fetcher } from "@/lib/api";
 import { useWs, wsHref } from "@/lib/ws";
+import { useTheme } from "@/lib/theme";
 import { Avatar } from "@/components/Avatar";
 
 interface WsRow { id: string; slug: string; name: string; role: string }
@@ -28,6 +29,7 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
   const ws = useWs();
   const me = useAuth((s) => s.me);
   const { data: mine } = useSWR<WsRow[]>("/workspaces/mine", fetcher);
+  const { theme, toggle } = useTheme();
   const [switcher, setSwitcher] = useState(false);
 
   const current = mine?.find((w) => w.slug === ws);
@@ -116,8 +118,15 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
         })()}
       </nav>
 
-      {/* Низ: профиль + выход */}
+      {/* Низ: тема + профиль */}
       <div className="border-t border-border p-3">
+        <button
+          onClick={toggle}
+          className="mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted transition hover:bg-surface-2 hover:text-text"
+        >
+          <span className="text-base">{theme === "dark" ? "🌙" : "☀️"}</span>
+          {theme === "dark" ? "Тёмная тема" : "Светлая тема"}
+        </button>
         <Link href={wsHref(ws, "/profile")} className="flex items-center gap-2 rounded-xl px-2 py-2 hover:bg-surface-2">
           <Avatar src={me?.avatarUrl} name={me?.displayName} className="h-9 w-9 bg-surface-2 text-sm" />
           <div className="min-w-0 flex-1">
