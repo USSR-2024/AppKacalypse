@@ -196,8 +196,9 @@ export async function processUpdate(update: TgUpdate): Promise<void> {
           eq(schema.workspaceMembers.status, "active"),
           eq(schema.authIdentities.provider, "telegram"),
         ));
+      const pfx = u.id.replace(/-/g, "").slice(0, 8);
       for (const a of admins) {
-        await sendMessage(a.externalId, `🔔 Новая заявка на вступление в «${esc(inv.wsName)}» от ${esc(tgName(msg.from))}. Одобри в приложении → Управление участниками.`);
+        await sendMessage(a.externalId, `🔔 Новая заявка в «${esc(inv.wsName)}» от ${esc(tgName(msg.from))}.\nОдобрить: /ok_${pfx}\nОтклонить: /no_${pfx}`);
       }
       return;
     }
@@ -240,6 +241,15 @@ export async function processUpdate(update: TgUpdate): Promise<void> {
     await sendMessage(chatId, "Ты ещё не в пространстве. Открой приложение и зайди в своё пространство, затем вернись в бота.");
     return;
   }
+  // Роль и название текущего воркспейса (для команд управления участниками).
+  const [wsInfo] = await db
+    .select({ role: schema.workspaceMembers.role, name: schema.workspaces.name })
+    .from(schema.workspaceMembers)
+    .innerJoin(schema.workspaces, eq(schema.workspaces.id, schema.workspaceMembers.workspaceId))
+    .where(and(eq(schema.workspaceMembers.workspaceId, workspaceId), eq(schema.workspaceMembers.userId, user.id)))
+    .limit(1);
+  const isWsAdmin = wsInfo?.role === "admin" || wsInfo?.role === "owner";
+  const wsName = wsInfo?.name ?? "";
 
   // ── Кнопки меню (перехват до отправки в модель) ──────────────────────────────
   if (text === BTN.newTask) {
@@ -284,6 +294,52 @@ export async function processUpdate(update: TgUpdate): Promise<void> {
         .where(eq(schema.users.id, user.id));
     }
     await sendSettings(chatId, user.id);
+    return;
+  }
+
+  // ── Управление участниками из бота (для админа пространства) ──────────────────
+  if (text === "/invite") {
+    if (!isWsAdmin) { await sendMessage(chatId, "Приглашать может только администратор пространства."); return; }
+    const code = randomBytes(9).toString("base64url");
+    await db.insert(schema.workspaceInvites).values({ workspaceId, code, role: "member", createdBy: user.id, expiresAt: new Date(Date.now() + 14 * 86400000) });
+    await sendMessage(chatId, `🔗 Ссылка-приглашение в «${esc(wsName)}» — перешли тому, кого зовёшь:\nhttps://t.me/${env.TG_BOT_USERNAME}?start=invite_${code}\n\nОн подаст заявку, а я пришлю тебе кнопки одобрить/отклонить.`);
+    return;
+  }
+  if (text === "/pending") {
+    if (!isWsAdmin) { await sendMessage(chatId, "Только администратор пространства."); return; }
+    const reqs = await db
+      .select({ userId: schema.workspaceMembers.userId, name: schema.users.displayName })
+      .from(schema.workspaceMembers)
+      .innerJoin(schema.users, eq(schema.users.id, schema.workspaceMembers.userId))
+      .where(and(eq(schema.workspaceMembers.workspaceId, workspaceId), eq(schema.workspaceMembers.status, "pending")));
+    if (!reqs.length) { await sendMessage(chatId, "Заявок на рассмотрении нет."); return; }
+    const lines = reqs.map((r) => { const p = r.userId.replace(/-/g, "").slice(0, 8); return `• ${esc(r.name)}\n   одобрить /ok_${p} · отклонить /no_${p}`; });
+    await sendMessage(chatId, `Заявки в «${esc(wsName)}»:\n${lines.join("\n")}`);
+    return;
+  }
+  if (text.startsWith("/ok_") || text.startsWith("/no_")) {
+    if (!isWsAdmin) { await sendMessage(chatId, "Только администратор пространства."); return; }
+    const approve = text.startsWith("/ok_");
+    const prefix = text.slice(4).trim().toLowerCase();
+    const reqs = await db
+      .select({ userId: schema.workspaceMembers.userId, name: schema.users.displayName })
+      .from(schema.workspaceMembers)
+      .innerJoin(schema.users, eq(schema.users.id, schema.workspaceMembers.userId))
+      .where(and(eq(schema.workspaceMembers.workspaceId, workspaceId), eq(schema.workspaceMembers.status, "pending")));
+    const match = reqs.find((r) => r.userId.replace(/-/g, "").startsWith(prefix));
+    if (!match) { await sendMessage(chatId, "Заявка не найдена — возможно, уже обработана. /pending — список заявок."); return; }
+    if (approve) {
+      await db.update(schema.workspaceMembers).set({ status: "active" })
+        .where(and(eq(schema.workspaceMembers.workspaceId, workspaceId), eq(schema.workspaceMembers.userId, match.userId)));
+      await sendMessage(chatId, `✅ ${esc(match.name)} добавлен(а) в «${esc(wsName)}».`);
+      const [ident] = await db.select({ externalId: schema.authIdentities.externalId }).from(schema.authIdentities)
+        .where(and(eq(schema.authIdentities.provider, "telegram"), eq(schema.authIdentities.userId, match.userId))).limit(1);
+      if (ident) await sendMessage(ident.externalId, `✅ Тебя одобрили в «${esc(wsName)}»! Открой приложение — доступ уже есть.`, mainKeyboard);
+    } else {
+      await db.delete(schema.workspaceMembers)
+        .where(and(eq(schema.workspaceMembers.workspaceId, workspaceId), eq(schema.workspaceMembers.userId, match.userId), eq(schema.workspaceMembers.status, "pending")));
+      await sendMessage(chatId, `❌ Заявка ${esc(match.name)} отклонена.`);
+    }
     return;
   }
 

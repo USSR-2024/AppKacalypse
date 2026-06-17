@@ -6,6 +6,7 @@ const schema = z.object({
   JWT_SECRET: z.string().min(16),
   JWT_TTL: z.string().default('30d'),
   TELEGRAM_BOT_TOKEN: z.string().min(1),
+  TG_BOT_USERNAME: z.string().default('appKACAlypse_bot'),  // для ссылок-приглашений из бота
   TELEGRAM_AUTH_MAX_AGE: z.coerce.number().default(86400),
   TELEGRAM_WEBHOOK_SECRET: z.string().default(''),
   GATEWAY_URL: z.string().url().default('http://llm-gateway:8000'),
