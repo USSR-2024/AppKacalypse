@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
-:root {
+/* Тёмная тема — по умолчанию */
+:root,
+:root[data-theme="dark"] {
   --bg: #0b0d12;
   --surface: #151a23;
   --surface-2: #1c232f;
@@ -11,6 +13,24 @@
   --danger: #ff5a65;
   --warn: #ffb340;
   --ok: #34d399;
+  --shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+  --shadow-strong: 0 16px 50px rgba(0, 0, 0, 0.5);
+}
+
+/* Светлая тема — премиальный SaaS (палитра из референса) */
+:root[data-theme="light"] {
+  --bg: #f5f8fd;
+  --surface: #ffffff;
+  --surface-2: #eef3fb;
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --muted: #64748b;
+  --accent: #2563eb;
+  --danger: #ef4444;
+  --warn: #f59e0b;
+  --ok: #10b981;
+  --shadow: 0 10px 40px rgba(37, 99, 235, 0.08);
+  --shadow-strong: 0 16px 50px rgba(37, 99, 235, 0.22);
 }
 
 @theme inline {
@@ -24,6 +44,8 @@
   --color-danger: var(--danger);
   --color-warn: var(--warn);
   --color-ok: var(--ok);
+  --shadow-soft: var(--shadow);
+  --shadow-strong: var(--shadow-strong);
 }
 
 html, body {

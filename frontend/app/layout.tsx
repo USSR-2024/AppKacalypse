@@ -21,10 +21,16 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
+// Ставит тему из localStorage ДО первой отрисовки (без мигания). Дефолт — тёмная.
+const themeScript = `(function(){try{var t=localStorage.getItem('akc_theme');document.documentElement.dataset.theme=(t==='light'||t==='dark')?t:'dark';}catch(e){document.documentElement.dataset.theme='dark';}})();`;
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="ru" className="h-full antialiased">
-      <body className="min-h-full">{children}</body>
+    <html lang="ru" className="h-full antialiased" suppressHydrationWarning>
+      <body className="min-h-full">
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        {children}
+      </body>
     </html>
   );
 }

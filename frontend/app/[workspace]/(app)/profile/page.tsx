@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/store";
 import { enablePush, disablePush, pushSupported } from "@/lib/push";
 import { Avatar } from "@/components/Avatar";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import type { Me } from "@/lib/types";
 
 const CHANNELS = [
@@ -150,6 +151,11 @@ export default function ProfilePage() {
             </Row>
           ))}
         </div>
+      </section>
+
+      <section className="mb-6">
+        <h2 className="mb-2 px-1 text-xs uppercase tracking-wide text-muted">Тема</h2>
+        <ThemeToggle />
       </section>
 
       <WsLink href="/done" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
