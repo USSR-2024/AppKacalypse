@@ -15,7 +15,7 @@ export function BottomNav() {
   const path = usePathname();
   const ws = useWs();
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-md border-t border-border bg-surface/95 backdrop-blur">
+    <nav className="fixed inset-x-0 bottom-0 z-30 mx-auto max-w-md border-t border-border bg-surface/95 backdrop-blur lg:hidden">
       <div className="flex" style={{ paddingBottom: "max(calc(env(safe-area-inset-bottom) - 0.5rem), 0px)" }}>
         {items.map((it) => {
           const href = wsHref(ws, it.href);
