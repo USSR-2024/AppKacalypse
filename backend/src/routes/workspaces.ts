@@ -6,6 +6,7 @@ import type { Context, Next } from 'hono';
 import { db, schema } from '../db/index.js';
 import { requireAuth } from '../lib/auth-middleware.js';
 import { requireWorkspace } from '../lib/workspace-middleware.js';
+import { notifyAdminGranted } from '../lib/notify.js';
 
 const ws = schema.workspaces;
 const wm = schema.workspaceMembers;
@@ -117,10 +118,15 @@ ownerRoutes.post('/workspaces/:id/members', async (c) => {
     role: z.enum(['owner', 'admin', 'member']).optional(),
   }).safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: 'bad_request' }, 400);
+  const wsId = c.req.param('id');
+  const role = parsed.data.role ?? 'member';
+  const [prev] = await db.select({ role: wm.role }).from(wm)
+    .where(and(eq(wm.workspaceId, wsId), eq(wm.userId, parsed.data.userId))).limit(1);
   const [member] = await db.insert(wm)
-    .values({ workspaceId: c.req.param('id'), userId: parsed.data.userId, role: parsed.data.role ?? 'member' })
-    .onConflictDoUpdate({ target: [wm.workspaceId, wm.userId], set: { role: parsed.data.role ?? 'member' } })
+    .values({ workspaceId: wsId, userId: parsed.data.userId, role })
+    .onConflictDoUpdate({ target: [wm.workspaceId, wm.userId], set: { role } })
     .returning();
+  if (role === 'admin' && prev?.role !== 'admin') await notifyAdminGranted(parsed.data.userId, wsId);
   return c.json(member, 201);
 });
 
@@ -207,6 +213,7 @@ memberRoutes.patch('/:userId', async (c) => {
   if (t.role === 'owner') return c.json({ error: 'forbidden' }, 403);
   await db.update(wm).set({ role: p.data.role })
     .where(and(eq(wm.workspaceId, w.id), eq(wm.userId, c.req.param('userId'))));
+  if (p.data.role === 'admin' && t.role !== 'admin') await notifyAdminGranted(c.req.param('userId'), w.id);
   return c.json({ ok: true });
 });
 

@@ -10,6 +10,28 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/**
+ * Уведомить юзера, что его назначили главой (admin) пространства. Канал — Telegram
+ * (доходит, если сделал /start боту). Вызывать только при ПОВЫШЕНии до admin.
+ */
+export async function notifyAdminGranted(userId: string, workspaceId: string): Promise<void> {
+  const [w] = await db.select({ name: schema.workspaces.name }).from(schema.workspaces).where(eq(schema.workspaces.id, workspaceId)).limit(1);
+  if (!w) return;
+  const [ident] = await db
+    .select({ externalId: schema.authIdentities.externalId })
+    .from(schema.authIdentities)
+    .where(and(eq(schema.authIdentities.provider, "telegram"), eq(schema.authIdentities.userId, userId)))
+    .limit(1);
+  if (!ident) return;
+  await sendMessage(
+    ident.externalId,
+    `🎖 Тебя назначили <b>главой</b> пространства «${esc(w.name)}».\n\n` +
+      `Теперь можешь приглашать людей и одобрять заявки:\n` +
+      `• в приложении → «Участники пространства»\n` +
+      `• в боте → /invite (ссылка-приглашение) и /pending (заявки)`,
+  );
+}
+
 /** Путь к задаче внутри её воркспейса: /<slug>/tasks/<id>. Slug берём из задачи. */
 async function taskPath(taskId: string): Promise<string> {
   const [row] = await db
