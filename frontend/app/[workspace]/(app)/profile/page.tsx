@@ -180,7 +180,7 @@ export default function ProfilePage() {
         </WsLink>
       )}
 
-      {(draft.role === "owner" || draft.role === "admin") && (
+      {draft.role === "owner" && (
         <>
           <WsLink href="/broadcast" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
             <span>📣 Уведомить об обновлении</span>
