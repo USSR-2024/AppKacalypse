@@ -15,7 +15,7 @@ import { assistantRoutes } from './routes/assistant.js';
 import { telegramRoutes } from './routes/telegram.js';
 import { pushRoutes } from './routes/push.js';
 import { broadcastRoutes } from './routes/broadcast.js';
-import { workspaceRoutes, ownerRoutes } from './routes/workspaces.js';
+import { workspaceRoutes, ownerRoutes, memberRoutes } from './routes/workspaces.js';
 import { startScheduler } from './lib/scheduler.js';
 
 const app = new Hono();
@@ -36,6 +36,7 @@ app.route('/api/push', pushRoutes);
 app.route('/api/broadcast', broadcastRoutes);
 app.route('/api/workspaces', workspaceRoutes);
 app.route('/api/owner', ownerRoutes);
+app.route('/api/members', memberRoutes);
 
 // Текущий пользователь по JWT.
 app.get('/api/me', requireAuth, async (c) => {

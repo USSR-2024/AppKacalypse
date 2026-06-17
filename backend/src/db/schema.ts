@@ -20,6 +20,9 @@ export const projectAccess = pgEnum('project_access', ['own', 'all']);
 // Роль участника внутри воркспейса (компании). owner = создатель пространства.
 export const workspaceRole = pgEnum('workspace_role', ['owner', 'admin', 'member']);
 
+// Статус членства: active = полноправный, pending = вступил по инвайту, ждёт одобрения админа.
+export const memberStatus = pgEnum('member_status', ['active', 'pending']);
+
 // Статусы задачи (ТЗ: в очереди / выполняется / готово / отменено / архив)
 export const taskStatus = pgEnum('task_status', [
   'queued',       // в очереди
@@ -111,11 +114,30 @@ export const workspaceMembers = pgTable('workspace_members', {
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   role: workspaceRole('role').notNull().default('member'),
+  // active = доступ есть; pending = вступил по инвайту, ждёт одобрения админа (доступа нет).
+  status: memberStatus('status').notNull().default('active'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   workspaceUserUnique: unique('workspace_member_unique').on(t.workspaceId, t.userId),
   workspaceIdx: index('workspace_members_workspace_idx').on(t.workspaceId),
   userIdx: index('workspace_members_user_idx').on(t.userId),
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// workspace_invites — ссылки-приглашения в воркспейс. Вступивший по коду получает
+// членство status='pending'. Многоразовая до истечения; гейт — одобрение админа.
+// ─────────────────────────────────────────────────────────────────────────────
+export const workspaceInvites = pgTable('workspace_invites', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  code: text('code').notNull(),
+  role: workspaceRole('role').notNull().default('member'),  // роль, которую получит вступивший после одобрения
+  createdBy: uuid('created_by').notNull().references(() => users.id),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  codeUnique: unique('workspace_invite_code_unique').on(t.code),
+  workspaceIdx: index('workspace_invites_workspace_idx').on(t.workspaceId),
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────

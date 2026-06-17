@@ -1,12 +1,15 @@
 import { Hono } from 'hono';
 import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { randomBytes } from 'node:crypto';
 import type { Context, Next } from 'hono';
 import { db, schema } from '../db/index.js';
 import { requireAuth } from '../lib/auth-middleware.js';
+import { requireWorkspace } from '../lib/workspace-middleware.js';
 
 const ws = schema.workspaces;
 const wm = schema.workspaceMembers;
+const wi = schema.workspaceInvites;
 
 // Зарезервированные слаги (конфликтуют с путями приложения).
 const RESERVED = new Set(['api', 'owner', 'auth', 'login', 'app', 'admin', 'static', '_next', 'health', 'sw.js']);
@@ -29,7 +32,7 @@ workspaceRoutes.use('*', requireAuth);
 workspaceRoutes.get('/mine', async (c) => {
   const u = c.get('user');
   const rows = await db
-    .select({ id: ws.id, slug: ws.slug, name: ws.name, role: wm.role })
+    .select({ id: ws.id, slug: ws.slug, name: ws.name, role: wm.role, status: wm.status })
     .from(wm)
     .innerJoin(ws, eq(ws.id, wm.workspaceId))
     .where(and(eq(wm.userId, u.sub), eq(ws.isActive, true)))
@@ -133,4 +136,89 @@ ownerRoutes.get('/users', async (c) => {
     .from(schema.users)
     .orderBy(schema.users.displayName);
   return c.json(rows);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /api/members — управление участниками ТЕКУЩЕГО воркспейса (для админа пространства).
+// Инвайты + одобрение заявок (status pending → active). Скоуп — X-Workspace.
+// ─────────────────────────────────────────────────────────────────────────────
+export const memberRoutes = new Hono();
+memberRoutes.use('*', requireAuth);
+memberRoutes.use('*', requireWorkspace);
+
+const isWsAdmin = (c: Context): boolean => {
+  const w = c.get('workspace');
+  return w.role === 'admin' || w.role === 'owner';
+};
+
+// Участники (active + pending) для экрана управления.
+memberRoutes.get('/', async (c) => {
+  if (!isWsAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+  const w = c.get('workspace');
+  const rows = await db
+    .select({ userId: wm.userId, role: wm.role, status: wm.status, displayName: schema.users.displayName, avatarUrl: schema.users.avatarUrl })
+    .from(wm)
+    .innerJoin(schema.users, eq(schema.users.id, wm.userId))
+    .where(eq(wm.workspaceId, w.id))
+    .orderBy(wm.status, wm.createdAt);
+  return c.json(rows);
+});
+
+// Создать инвайт-ссылку (код). Фронт строит t.me/<bot>?start=invite_<code>.
+memberRoutes.post('/invite', async (c) => {
+  if (!isWsAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+  const w = c.get('workspace');
+  const u = c.get('user');
+  const p = z.object({ role: z.enum(['admin', 'member']).optional() }).safeParse(await c.req.json().catch(() => ({})));
+  const role = p.success ? (p.data.role ?? 'member') : 'member';
+  const code = randomBytes(9).toString('base64url');
+  const expiresAt = new Date(Date.now() + 14 * 86400000);  // 14 дней
+  await db.insert(wi).values({ workspaceId: w.id, code, role, createdBy: u.sub, expiresAt });
+  return c.json({ code, expiresAt }, 201);
+});
+
+// Одобрить заявку (pending → active).
+memberRoutes.post('/:userId/approve', async (c) => {
+  if (!isWsAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+  const w = c.get('workspace');
+  await db.update(wm).set({ status: 'active' })
+    .where(and(eq(wm.workspaceId, w.id), eq(wm.userId, c.req.param('userId'))));
+  return c.json({ ok: true });
+});
+
+// Отклонить заявку (удалить pending-членство).
+memberRoutes.post('/:userId/reject', async (c) => {
+  if (!isWsAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+  const w = c.get('workspace');
+  await db.delete(wm)
+    .where(and(eq(wm.workspaceId, w.id), eq(wm.userId, c.req.param('userId')), eq(wm.status, 'pending')));
+  return c.json({ ok: true });
+});
+
+// Сменить роль участника (admin/member). owner неприкосновенен.
+memberRoutes.patch('/:userId', async (c) => {
+  if (!isWsAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+  const w = c.get('workspace');
+  const p = z.object({ role: z.enum(['admin', 'member']) }).safeParse(await c.req.json().catch(() => null));
+  if (!p.success) return c.json({ error: 'bad_request' }, 400);
+  const [t] = await db.select({ role: wm.role }).from(wm)
+    .where(and(eq(wm.workspaceId, w.id), eq(wm.userId, c.req.param('userId')))).limit(1);
+  if (!t) return c.json({ error: 'not_found' }, 404);
+  if (t.role === 'owner') return c.json({ error: 'forbidden' }, 403);
+  await db.update(wm).set({ role: p.data.role })
+    .where(and(eq(wm.workspaceId, w.id), eq(wm.userId, c.req.param('userId'))));
+  return c.json({ ok: true });
+});
+
+// Удалить участника. Себя и owner нельзя.
+memberRoutes.delete('/:userId', async (c) => {
+  if (!isWsAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+  const w = c.get('workspace');
+  const u = c.get('user');
+  if (c.req.param('userId') === u.sub) return c.json({ error: 'self_forbidden' }, 400);
+  const [t] = await db.select({ role: wm.role }).from(wm)
+    .where(and(eq(wm.workspaceId, w.id), eq(wm.userId, c.req.param('userId')))).limit(1);
+  if (t?.role === 'owner') return c.json({ error: 'forbidden' }, 403);
+  await db.delete(wm).where(and(eq(wm.workspaceId, w.id), eq(wm.userId, c.req.param('userId'))));
+  return c.json({ ok: true });
 });

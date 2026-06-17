@@ -14,7 +14,7 @@ import { PullToRefresh } from "@/components/PullToRefresh";
 import { TaskComposer } from "@/components/TaskComposer";
 import type { Me } from "@/lib/types";
 
-interface WsRow { slug: string }
+interface WsRow { slug: string; name: string; status: "active" | "pending" }
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -22,12 +22,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const ws = useWs();
   const token = useAuth((s) => s.token);
   const setMe = useAuth((s) => s.setMe);
+  const logout = useAuth((s) => s.logout);
   const [ready, setReady] = useState(false);
+  const [pending, setPending] = useState<string | null>(null);  // имя ws, куда подана заявка
   const [composer, setComposer] = useState(false);
   // Прячем FAB на ассистенте (свой ввод) и в карточке задачи (перекрывал кнопку отправки коммента).
   const hideFab = pathname.includes("/assistant") || pathname.includes("/tasks/");
 
-  // Гейт: нет токена → /login; есть, но юзер не член этого воркспейса → лендинг (выбор/сообщение).
+  // Гейт: нет токена → /login; членство active → внутрь; pending → экран ожидания; иначе → лендинг.
   useEffect(() => {
     if (!token) {
       router.replace("/login");
@@ -38,7 +40,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       try {
         const mine = await api<WsRow[]>("/workspaces/mine");
         if (cancelled) return;
-        if (mine.some((w) => w.slug === ws)) setReady(true);
+        const cur = mine.find((w) => w.slug === ws);
+        if (cur?.status === "active") setReady(true);
+        else if (cur?.status === "pending") setPending(cur.name);
         else router.replace("/");
       } catch {
         if (!cancelled) router.replace("/");
@@ -55,6 +59,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (me) setMe(me);
   }, [me, setMe]);
+
+  if (pending) {
+    return (
+      <main className="flex min-h-dvh flex-col items-center justify-center gap-3 px-6 text-center">
+        <div className="text-5xl">⏳</div>
+        <p className="text-lg font-medium">Заявка на рассмотрении</p>
+        <p className="text-muted">Ты подал заявку на вступление в «{pending}». Доступ откроется, когда администратор её одобрит — бот пришлёт уведомление.</p>
+        <button onClick={() => logout()} className="mt-2 text-sm text-muted underline">Выйти</button>
+      </main>
+    );
+  }
 
   if (!ready) return null;
 

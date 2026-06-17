@@ -33,18 +33,21 @@ export async function requireWorkspace(c: Context, next: Next) {
   if (!ws || !ws.isActive) return c.json({ error: 'workspace_not_found' }, 404);
 
   const [member] = await db
-    .select({ role: schema.workspaceMembers.role })
+    .select({ role: schema.workspaceMembers.role, status: schema.workspaceMembers.status })
     .from(schema.workspaceMembers)
     .where(and(eq(schema.workspaceMembers.workspaceId, ws.id), eq(schema.workspaceMembers.userId, u.sub)))
     .limit(1);
 
   let role = member?.role;
-  if (!role) {
+  if (!member) {
     if (u.role === 'owner') role = 'owner';        // платформенный owner — сквозной доступ
     else return c.json({ error: 'not_a_member' }, 403);
+  } else if (member.status === 'pending') {
+    // Вступил по инвайту, ещё не одобрен — доступа к данным нет.
+    return c.json({ error: 'pending_approval' }, 403);
   }
 
-  c.set('workspace', { id: ws.id, slug: ws.slug, role });
+  c.set('workspace', { id: ws.id, slug: ws.slug, role: role! });
   return next();
 }
 
@@ -56,7 +59,7 @@ export async function resolveUserWorkspaceId(userId: string): Promise<string | n
   const [m] = await db
     .select({ workspaceId: schema.workspaceMembers.workspaceId })
     .from(schema.workspaceMembers)
-    .where(eq(schema.workspaceMembers.userId, userId))
+    .where(and(eq(schema.workspaceMembers.userId, userId), eq(schema.workspaceMembers.status, 'active')))
     .orderBy(schema.workspaceMembers.createdAt)
     .limit(1);
   return m?.workspaceId ?? null;

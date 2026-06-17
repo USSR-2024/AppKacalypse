@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import { WsLink } from "@/components/WsLink";
-import { mutate } from "swr";
-import { api } from "@/lib/api";
+import useSWR, { mutate } from "swr";
+import { api, fetcher } from "@/lib/api";
+import { useWs } from "@/lib/ws";
 import { useAuth } from "@/lib/store";
 import { enablePush, disablePush, pushSupported } from "@/lib/push";
 import { Avatar } from "@/components/Avatar";
@@ -22,6 +23,10 @@ export default function ProfilePage() {
   const [saved, setSaved] = useState(false);
   const [first, setFirst] = useState("");
   const [last, setLast] = useState("");
+  const ws = useWs();
+  const { data: mine } = useSWR<{ slug: string; role: string }[]>("/workspaces/mine", fetcher);
+  const wsRole = mine?.find((w) => w.slug === ws)?.role;
+  const wsAdmin = wsRole === "admin" || wsRole === "owner";
 
   useEffect(() => setDraft(me), [me]);
   useEffect(() => {
@@ -168,16 +173,23 @@ export default function ProfilePage() {
         <span className="text-muted">›</span>
       </WsLink>
 
+      {wsAdmin && (
+        <WsLink href="/users" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
+          <span>🧑‍🤝‍🧑 Участники пространства</span>
+          <span className="text-muted">›</span>
+        </WsLink>
+      )}
+
       {(draft.role === "owner" || draft.role === "admin") && (
         <>
           <WsLink href="/broadcast" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
             <span>📣 Уведомить об обновлении</span>
             <span className="text-muted">›</span>
           </WsLink>
-          <WsLink href="/users" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
-            <span>⚙️ Управление пользователями</span>
+          <a href="/owner" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
+            <span>🛠 Owner-консоль</span>
             <span className="text-muted">›</span>
-          </WsLink>
+          </a>
         </>
       )}
 

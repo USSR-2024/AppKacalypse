@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
 import { db, schema } from "../db/index.js";
 import { env } from "./env.js";
@@ -156,6 +156,52 @@ export async function processUpdate(update: TgUpdate): Promise<void> {
       );
       return;
     }
+
+    // ── Инвайт в пространство → членство status=pending (ждёт одобрения админа) ──
+    if (payload.startsWith("invite_")) {
+      const code = payload.slice("invite_".length);
+      const [inv] = await db
+        .select({ workspaceId: schema.workspaceInvites.workspaceId, role: schema.workspaceInvites.role, expiresAt: schema.workspaceInvites.expiresAt, wsName: schema.workspaces.name })
+        .from(schema.workspaceInvites)
+        .innerJoin(schema.workspaces, eq(schema.workspaces.id, schema.workspaceInvites.workspaceId))
+        .where(eq(schema.workspaceInvites.code, code))
+        .limit(1);
+      if (!inv || (inv.expiresAt && inv.expiresAt < new Date())) {
+        await sendMessage(chatId, "Ссылка-приглашение недействительна или истекла. Попроси администратора прислать новую.", mainKeyboard);
+        return;
+      }
+      const [existing] = await db
+        .select({ status: schema.workspaceMembers.status })
+        .from(schema.workspaceMembers)
+        .where(and(eq(schema.workspaceMembers.workspaceId, inv.workspaceId), eq(schema.workspaceMembers.userId, u.id)))
+        .limit(1);
+      if (existing) {
+        await sendMessage(chatId, existing.status === "active"
+          ? `Ты уже в пространстве «${esc(inv.wsName)}». Открой приложение.`
+          : `Заявка в «${esc(inv.wsName)}» уже отправлена — ждём одобрения администратора.`, mainKeyboard);
+        return;
+      }
+      await db.insert(schema.workspaceMembers)
+        .values({ workspaceId: inv.workspaceId, userId: u.id, role: inv.role, status: "pending" })
+        .onConflictDoNothing();
+      await sendMessage(chatId, `📨 Заявка на вступление в «${esc(inv.wsName)}» отправлена. Дождись одобрения администратора — я сообщу, когда откроют доступ.`, mainKeyboard);
+      // Уведомить админов пространства о новой заявке.
+      const admins = await db
+        .select({ externalId: schema.authIdentities.externalId })
+        .from(schema.workspaceMembers)
+        .innerJoin(schema.authIdentities, eq(schema.authIdentities.userId, schema.workspaceMembers.userId))
+        .where(and(
+          eq(schema.workspaceMembers.workspaceId, inv.workspaceId),
+          inArray(schema.workspaceMembers.role, ["admin", "owner"]),
+          eq(schema.workspaceMembers.status, "active"),
+          eq(schema.authIdentities.provider, "telegram"),
+        ));
+      for (const a of admins) {
+        await sendMessage(a.externalId, `🔔 Новая заявка на вступление в «${esc(inv.wsName)}» от ${esc(tgName(msg.from))}. Одобри в приложении → Управление участниками.`);
+      }
+      return;
+    }
+
     const [info] = await db.select({ displayName: schema.users.displayName, isActive: schema.users.isActive }).from(schema.users).where(eq(schema.users.id, u.id)).limit(1);
     if (info && !info.isActive) {
       await sendMessage(chatId, "Доступ приостановлен администратором.");

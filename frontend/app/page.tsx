@@ -4,11 +4,12 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/store";
 import { api } from "@/lib/api";
 
-interface WsRow { id: string; slug: string; name: string; role: string }
+interface WsRow { id: string; slug: string; name: string; role: string; status: "active" | "pending" }
 
 export default function Home() {
   const router = useRouter();
   const [list, setList] = useState<WsRow[] | null>(null);
+  const [pending, setPending] = useState<WsRow[]>([]);
   const [err, setErr] = useState(false);
 
   useEffect(() => {
@@ -19,10 +20,12 @@ export default function Home() {
     let cancelled = false;
     (async () => {
       try {
-        const ws = await api<WsRow[]>("/workspaces/mine");
+        const all = await api<WsRow[]>("/workspaces/mine");
         if (cancelled) return;
-        if (ws.length === 1) router.replace(`/${ws[0].slug}/today`);
-        else setList(ws);
+        const active = all.filter((w) => w.status === "active");
+        if (active.length === 1) { router.replace(`/${active[0].slug}/today`); return; }
+        setList(active);
+        setPending(all.filter((w) => w.status === "pending"));
       } catch {
         if (!cancelled) setErr(true);
       }
@@ -45,10 +48,21 @@ export default function Home() {
   }
 
   if (list && list.length === 0) {
+    // Только заявки на рассмотрении.
+    if (pending.length > 0) {
+      return (
+        <main className="flex min-h-dvh flex-col items-center justify-center gap-3 px-6 text-center">
+          <div className="text-5xl">⏳</div>
+          <p className="text-lg font-medium">Заявка на рассмотрении</p>
+          <p className="text-muted">Ты подал заявку в «{pending.map((w) => w.name).join("», «")}». Доступ откроется после одобрения администратора — бот пришлёт уведомление.</p>
+          <button onClick={() => useAuth.getState().logout()} className="mt-2 text-sm text-muted underline">Выйти</button>
+        </main>
+      );
+    }
     return (
       <main className="flex min-h-dvh flex-col items-center justify-center gap-3 px-6 text-center">
         <p className="text-lg font-medium">Нет доступных пространств</p>
-        <p className="text-muted">Ты ещё не добавлен ни в одну компанию. Обратись к администратору, чтобы он добавил тебя в пространство.</p>
+        <p className="text-muted">Ты ещё не добавлен ни в одну компанию. Попроси администратора прислать приглашение в пространство.</p>
         <button onClick={() => useAuth.getState().logout()} className="mt-2 text-sm text-muted underline">Выйти</button>
       </main>
     );
