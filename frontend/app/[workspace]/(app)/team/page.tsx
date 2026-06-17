@@ -5,11 +5,10 @@ import { mutate } from "swr";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/store";
 import { useTeams, useUsers } from "@/lib/hooks";
+import { wsRoleLabel } from "@/lib/roles";
 import { Avatar } from "@/components/Avatar";
 import { SheetSelect, type Opt } from "@/components/SheetSelect";
 import type { Team } from "@/lib/types";
-
-const roleLabel = (r: string) => (r === "owner" ? "Владелец" : r === "admin" ? "Админ" : "Участник");
 
 export default function TeamPage() {
   const me = useAuth((s) => s.me);
@@ -17,6 +16,9 @@ export default function TeamPage() {
   const { data: teams } = useTeams();
   const [newName, setNewName] = useState("");
   const [busy, setBusy] = useState(false);
+  // Моя роль В ПРОСТРАНСТВЕ (из списка участников), а не платформенная.
+  const myWsRole = users?.find((u) => u.id === me?.id)?.role;
+  const isWsAdmin = myWsRole === "owner" || myWsRole === "admin";
 
   const userOpts: Opt[] = (users ?? []).map((u) => ({ value: u.id, label: u.displayName, avatar: u.avatarUrl }));
 
@@ -55,7 +57,7 @@ export default function TeamPage() {
         </div>
         <div className="flex flex-col gap-2">
           {teams?.map((team) => (
-            <TeamCard key={team.id} team={team} userOpts={userOpts} canManage={me?.role === "owner" || me?.role === "admin" || team.ownerId === me?.id} />
+            <TeamCard key={team.id} team={team} userOpts={userOpts} canManage={isWsAdmin || team.ownerId === me?.id} />
           ))}
           {teams && teams.length === 0 && <p className="text-sm text-muted">Команд пока нет. Создайте первую.</p>}
         </div>
@@ -69,7 +71,7 @@ export default function TeamPage() {
             <div key={u.id} className="flex items-center gap-3 rounded-2xl bg-surface px-4 py-3">
               <Avatar src={u.avatarUrl} name={u.displayName} className="h-9 w-9 bg-surface-2 text-sm" />
               <span className="flex-1 truncate">{u.displayName}</span>
-              <span className="text-xs text-muted">{roleLabel(u.role)}</span>
+              <span className="text-xs text-muted">{wsRoleLabel(u.role)}</span>
             </div>
           ))}
         </div>

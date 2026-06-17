@@ -4,14 +4,13 @@ import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { api, fetcher } from "@/lib/api";
 import { useAuth } from "@/lib/store";
+import { wsRoleLabel } from "@/lib/roles";
 import { Avatar } from "@/components/Avatar";
 import type { Me } from "@/lib/types";
 
 interface OwnerWs { id: string; slug: string; name: string; isActive: boolean; memberCount: number }
 interface OwnerUser { id: string; displayName: string; avatarUrl: string | null; role: string; isActive: boolean }
 interface WsMember { userId: string; role: string; displayName: string; avatarUrl: string | null }
-
-const ROLE_LABEL: Record<string, string> = { owner: "владелец", admin: "глава", member: "участник" };
 
 export default function OwnerPage() {
   const router = useRouter();
@@ -150,11 +149,17 @@ function Members({ ws, users }: { ws: OwnerWs; users: OwnerUser[] }) {
           <div key={m.userId} className="flex items-center gap-3">
             <Avatar src={m.avatarUrl} name={m.displayName} className="h-7 w-7 bg-surface-2 text-xs" />
             <span className="flex-1 truncate text-sm">{m.displayName}</span>
-            <select value={m.role} onChange={(e) => setRole(m.userId, e.target.value)} className="rounded-lg bg-bg px-2 py-1 text-xs">
-              <option value="admin">{ROLE_LABEL.admin}</option>
-              <option value="member">{ROLE_LABEL.member}</option>
-            </select>
-            <button onClick={() => remove(m.userId)} className="text-xs text-danger">убрать</button>
+            {m.role === "owner" ? (
+              <span className="px-2 py-1 text-xs text-muted">{wsRoleLabel("owner")}</span>
+            ) : (
+              <>
+                <select value={m.role} onChange={(e) => setRole(m.userId, e.target.value)} className="rounded-lg bg-bg px-2 py-1 text-xs">
+                  <option value="admin">{wsRoleLabel("admin")}</option>
+                  <option value="member">{wsRoleLabel("member")}</option>
+                </select>
+                <button onClick={() => remove(m.userId)} className="text-xs text-danger">убрать</button>
+              </>
+            )}
           </div>
         ))}
         {members && members.length === 0 && <p className="text-xs text-muted">Участников нет.</p>}
@@ -166,8 +171,8 @@ function Members({ ws, users }: { ws: OwnerWs; users: OwnerUser[] }) {
             {candidates.map((u) => <option key={u.id} value={u.id}>{u.displayName}</option>)}
           </select>
           <select value={addRole} onChange={(e) => setAddRole(e.target.value)} className="rounded-lg bg-bg px-2 py-1.5 text-sm">
-            <option value="member">{ROLE_LABEL.member}</option>
-            <option value="admin">{ROLE_LABEL.admin}</option>
+            <option value="member">{wsRoleLabel("member")}</option>
+            <option value="admin">{wsRoleLabel("admin")}</option>
           </select>
           <button onClick={add} disabled={!addUser} className="rounded-lg bg-accent px-3 py-1.5 text-sm text-white disabled:opacity-40">ОК</button>
         </div>

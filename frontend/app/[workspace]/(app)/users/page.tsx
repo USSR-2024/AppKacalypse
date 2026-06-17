@@ -4,6 +4,7 @@ import useSWR from "swr";
 import { WsLink } from "@/components/WsLink";
 import { fetcher, api } from "@/lib/api";
 import { useAuth } from "@/lib/store";
+import { wsRoleLabel } from "@/lib/roles";
 import { Avatar } from "@/components/Avatar";
 
 interface Member {
@@ -14,7 +15,6 @@ interface Member {
   avatarUrl: string | null;
 }
 
-const ROLE_LABEL: Record<string, string> = { owner: "Владелец", admin: "Глава", member: "Участник" };
 const bot = process.env.NEXT_PUBLIC_TG_BOT;
 
 export default function MembersPage() {
@@ -115,7 +115,7 @@ export default function MembersPage() {
                 <Avatar src={m.avatarUrl} name={m.displayName} className="h-10 w-10 shrink-0 bg-accent text-white" />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{m.displayName}{isSelf ? " · вы" : ""}</div>
-                  <div className="text-xs text-muted">{ROLE_LABEL[m.role] ?? m.role}</div>
+                  <div className="text-xs text-muted">{wsRoleLabel(m.role)}</div>
                 </div>
                 {!isOwner && !isSelf && (
                   <div className="flex shrink-0 gap-1.5">
