@@ -1,12 +1,24 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
+import { env } from "./env.js";
 import { sendMessage } from "./telegram-bot.js";
 import { sendPush } from "./push.js";
 
-const APP_URL = "https://appkacalypse.baassist.ru";
+const APP_URL = env.PUBLIC_APP_URL;
 
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Путь к задаче внутри её воркспейса: /<slug>/tasks/<id>. Slug берём из задачи. */
+async function taskPath(taskId: string): Promise<string> {
+  const [row] = await db
+    .select({ slug: schema.workspaces.slug })
+    .from(schema.tasks)
+    .innerJoin(schema.workspaces, eq(schema.workspaces.id, schema.tasks.workspaceId))
+    .where(eq(schema.tasks.id, taskId))
+    .limit(1);
+  return row ? `/${row.slug}/tasks/${taskId}` : `/tasks/${taskId}`;
 }
 
 /**
@@ -30,9 +42,10 @@ export async function notifyMentions(
     .where(and(eq(schema.authIdentities.provider, "telegram"), inArray(schema.authIdentities.userId, targets)));
 
   const snippet = body.length > 200 ? body.slice(0, 200) + "…" : body;
+  const path = await taskPath(taskId);
   const text =
     `💬 <b>${esc(authorName)}</b> упомянул вас в задаче «${esc(taskTitle)}»:\n` +
-    `${esc(snippet)}\n\nОткрыть: ${APP_URL}/tasks/${taskId}`;
+    `${esc(snippet)}\n\nОткрыть: ${APP_URL}${path}`;
 
   for (const i of idents) {
     await sendMessage(i.externalId, text);
@@ -42,7 +55,7 @@ export async function notifyMentions(
   await sendPush(targets, {
     title: `💬 ${authorName}`,
     body: `${taskTitle}: ${snippet}`,
-    url: `/tasks/${taskId}`,
+    url: path,
   });
 }
 
@@ -65,9 +78,10 @@ export async function notifyAssigned(
     .from(schema.authIdentities)
     .where(and(eq(schema.authIdentities.provider, "telegram"), inArray(schema.authIdentities.userId, targets)));
 
+  const path = await taskPath(taskId);
   const text =
     `📌 <b>${esc(assignerName)}</b> поставил вам задачу:\n` +
-    `«${esc(taskTitle)}»\n\nОзнакомьтесь: ${APP_URL}/tasks/${taskId}`;
+    `«${esc(taskTitle)}»\n\nОзнакомьтесь: ${APP_URL}${path}`;
 
   for (const i of idents) {
     await sendMessage(i.externalId, text);
@@ -76,6 +90,6 @@ export async function notifyAssigned(
   await sendPush(targets, {
     title: "📌 Новая задача",
     body: `${assignerName}: ${taskTitle}`,
-    url: `/tasks/${taskId}`,
+    url: path,
   });
 }

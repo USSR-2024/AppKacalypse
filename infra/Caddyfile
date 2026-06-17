@@ -4,7 +4,9 @@
 	email {$ACME_EMAIL}
 }
 
-{$DOMAIN_TASKS} {
+# Основной домен appka.space (мульти-тенант, путь /<slug>) + старый домен на
+# переходный период (старые установленные PWA продолжают работать).
+appka.space, www.appka.space, {$DOMAIN_TASKS} {
 	encode gzip
 	# Наше приложение: /api/* → бэкенд, остальное → фронт (Next).
 	handle /api/* {

@@ -4,7 +4,8 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import useSWR from "swr";
 import { useAuth } from "@/lib/store";
-import { fetcher } from "@/lib/api";
+import { fetcher, api } from "@/lib/api";
+import { useWs, wsHref } from "@/lib/ws";
 import { registerSW } from "@/lib/push";
 import { Avatar } from "@/components/Avatar";
 import { BottomNav } from "@/components/BottomNav";
@@ -12,20 +13,38 @@ import { PullToRefresh } from "@/components/PullToRefresh";
 import { TaskComposer } from "@/components/TaskComposer";
 import type { Me } from "@/lib/types";
 
+interface WsRow { slug: string }
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const ws = useWs();
   const token = useAuth((s) => s.token);
   const setMe = useAuth((s) => s.setMe);
   const [ready, setReady] = useState(false);
   const [composer, setComposer] = useState(false);
   // Прячем FAB на ассистенте (свой ввод) и в карточке задачи (перекрывал кнопку отправки коммента).
-  const hideFab = pathname.startsWith("/assistant") || pathname.startsWith("/tasks/");
+  const hideFab = pathname.includes("/assistant") || pathname.includes("/tasks/");
 
+  // Гейт: нет токена → /login; есть, но юзер не член этого воркспейса → лендинг (выбор/сообщение).
   useEffect(() => {
-    if (!token) router.replace("/login");
-    else setReady(true);
-  }, [token, router]);
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const mine = await api<WsRow[]>("/workspaces/mine");
+        if (cancelled) return;
+        if (mine.some((w) => w.slug === ws)) setReady(true);
+        else router.replace("/");
+      } catch {
+        if (!cancelled) router.replace("/");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token, ws, router]);
 
   useEffect(() => {
     registerSW();
@@ -41,7 +60,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col">
       <Link
-        href="/profile"
+        href={wsHref(ws, "/profile")}
         className="fixed right-2 z-30 p-2"
         style={{ top: "calc(env(safe-area-inset-top) + 0.5rem)" }}
         aria-label="Профиль"

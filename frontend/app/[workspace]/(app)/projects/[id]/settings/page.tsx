@@ -1,10 +1,11 @@
 "use client";
 import { use, useEffect, useState } from "react";
-import Link from "next/link";
+import { WsLink } from "@/components/WsLink";
 import { useRouter } from "next/navigation";
 import { mutate } from "swr";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/store";
+import { useWs, wsHref } from "@/lib/ws";
 import { refreshTasks, useProjects, useProjectDetail, useTeams, useUsers } from "@/lib/hooks";
 import { Avatar } from "@/components/Avatar";
 import { SheetSelect, type Opt } from "@/components/SheetSelect";
@@ -15,6 +16,7 @@ const COLORS = ["#4f8cff", "#22c55e", "#f59e0b", "#ef4444", "#a855f7", "#06b6d4"
 export default function ProjectSettingsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const ws = useWs();
   const me = useAuth((s) => s.me);
   const { data: detail } = useProjectDetail(id);
   const isAdminGlobal = me?.role === "admin" || me?.role === "owner";
@@ -24,13 +26,13 @@ export default function ProjectSettingsPage({ params }: { params: Promise<{ id: 
 
   return (
     <main className="px-4 pt-12 pb-12">
-      <Link href={`/projects/${id}`} className="text-sm text-muted">‹ {detail.name}</Link>
+      <WsLink href={`/projects/${id}`} className="text-sm text-muted">‹ {detail.name}</WsLink>
       <h1 className="mb-6 mt-2 text-2xl font-semibold">Настройки проекта</h1>
 
       {canManage && <NameColor id={id} detail={detail} />}
       {canManage && <Sections id={id} detail={detail} />}
       <Team id={id} detail={detail} canManage={canManage} />
-      <Danger id={id} detail={detail} isAdminGlobal={!!isAdminGlobal} onGone={() => router.replace("/projects")} />
+      <Danger id={id} detail={detail} isAdminGlobal={!!isAdminGlobal} onGone={() => router.replace(wsHref(ws, "/projects"))} />
     </main>
   );
 }
@@ -163,6 +165,14 @@ function Team({ id, detail, canManage }: { id: string; detail: ProjectDetail; ca
     await api(`/projects/${id}/members/${userId}`, { method: "DELETE" });
     mutate(`/projects/${id}`);
   }
+  // Доступ участника к задачам проекта: свои ↔ все (руководитель видит все, не будучи в задаче).
+  async function toggleAccess(userId: string, current: string) {
+    await api(`/projects/${id}/members`, {
+      method: "POST",
+      body: JSON.stringify({ userId, role: "member", accessScope: current === "all" ? "own" : "all" }),
+    });
+    mutate(`/projects/${id}`);
+  }
 
   return (
     <section className="mb-6">
@@ -172,10 +182,20 @@ function Team({ id, detail, canManage }: { id: string; detail: ProjectDetail; ca
           <div key={m.userId} className="flex items-center gap-3 rounded-2xl bg-surface px-4 py-2.5">
             <Avatar src={m.avatarUrl} name={m.displayName} className="h-8 w-8 bg-surface-2 text-sm" />
             <span className="flex-1 truncate text-sm">{m.displayName}</span>
-            {m.role === "lead" && <span className="text-xs text-muted">лид</span>}
-            {canManage && m.role !== "lead" && (
-              <button onClick={() => removeMember(m.userId)} className="text-xs text-danger">убрать</button>
-            )}
+            {m.role === "lead" ? (
+              <span className="text-xs text-muted">лид · видит все</span>
+            ) : canManage ? (
+              <>
+                <button
+                  onClick={() => toggleAccess(m.userId, m.accessScope)}
+                  className="text-xs text-muted"
+                  title="Доступ к задачам проекта"
+                >
+                  {m.accessScope === "all" ? "видит все" : "видит свои"}
+                </button>
+                <button onClick={() => removeMember(m.userId)} className="text-xs text-danger">убрать</button>
+              </>
+            ) : null}
           </div>
         ))}
       </div>

@@ -1,12 +1,24 @@
 import { useAuth } from "./store";
 
+// Текущий воркспейс = первый сегмент пути (/<slug>/...). Шлём его в X-Workspace,
+// чтобы бэкенд скоупил данные по компании. На /login, /auth, /owner и лендинге
+// заголовок просто игнорируется бэкендом.
+function currentWorkspace(): string | null {
+  if (typeof window === "undefined") return null;
+  const seg = window.location.pathname.split("/").filter(Boolean)[0];
+  if (!seg || ["login", "auth", "owner"].includes(seg)) return null;
+  return seg;
+}
+
 export async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
   const token = useAuth.getState().token;
+  const ws = currentWorkspace();
   const res = await fetch("/api" + path, {
     ...opts,
     headers: {
       "content-type": "application/json",
       ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(ws ? { "x-workspace": ws } : {}),
       ...opts.headers,
     },
   });

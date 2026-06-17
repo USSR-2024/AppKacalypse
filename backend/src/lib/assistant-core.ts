@@ -71,13 +71,17 @@ export interface Resolvers {
   resolveAssignee: (name?: string | null) => string | null;
 }
 
-/** Загружает справочники юзеров/проектов и резолверы имён → id. */
-export async function loadResolvers(meId?: string, meName?: string): Promise<Resolvers> {
-  const users = await db.select({ id: schema.users.id, displayName: schema.users.displayName }).from(schema.users);
+/** Загружает справочники юзеров/проектов и резолверы имён → id. Скоуп — воркспейс. */
+export async function loadResolvers(workspaceId: string, meId?: string, meName?: string): Promise<Resolvers> {
+  const users = await db
+    .select({ id: schema.users.id, displayName: schema.users.displayName })
+    .from(schema.users)
+    .innerJoin(schema.workspaceMembers, eq(schema.workspaceMembers.userId, schema.users.id))
+    .where(eq(schema.workspaceMembers.workspaceId, workspaceId));
   const projects = await db
     .select({ id: schema.projects.id, name: schema.projects.name })
     .from(schema.projects)
-    .where(eq(schema.projects.isArchived, false));
+    .where(and(eq(schema.projects.workspaceId, workspaceId), eq(schema.projects.isArchived, false)));
 
   const resolveProject = (name?: string | null): string | null => {
     if (!name) return null;
@@ -106,9 +110,9 @@ export async function loadResolvers(meId?: string, meName?: string): Promise<Res
   return { resolveProject, resolveAssignee };
 }
 
-/** Выполняет запрос query_tasks → список задач. */
-export async function runTaskQuery(meId: string, q: GatewayQuery, r: Resolvers): Promise<TaskRow[]> {
-  const conds = [];
+/** Выполняет запрос query_tasks → список задач. Скоуп — воркспейс. */
+export async function runTaskQuery(meId: string, q: GatewayQuery, r: Resolvers, workspaceId: string): Promise<TaskRow[]> {
+  const conds = [eq(t.workspaceId, workspaceId)];
   const assigneeFilter = q.assignee ? r.resolveAssignee(q.assignee) : null;
   const projectFilter = q.project ? r.resolveProject(q.project) : null;
 

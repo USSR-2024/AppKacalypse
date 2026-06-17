@@ -3,13 +3,16 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "../db/index.js";
 import { requireAuth } from "../lib/auth-middleware.js";
+import { requireWorkspace } from "../lib/workspace-middleware.js";
 import { gatewayExtract, loadResolvers, runTaskQuery, queryAnswer, draftFromTask } from "../lib/assistant-core.js";
 
 export const assistantRoutes = new Hono();
 assistantRoutes.use("*", requireAuth);
+assistantRoutes.use("*", requireWorkspace);
 
 assistantRoutes.post("/extract", async (c) => {
   const u = c.get("user");
+  const ws = c.get("workspace");
   const parsed = z
     .object({
       text: z.string().min(1).max(2000),
@@ -40,10 +43,10 @@ assistantRoutes.post("/extract", async (c) => {
     return c.json({ intent: "error", drafts: [], tasks: [], questions: [], note: null, reply: "Модель сейчас недоступна — попробуй ещё раз через минуту." });
   }
 
-  const resolvers = await loadResolvers(me?.id, me?.displayName);
+  const resolvers = await loadResolvers(ws.id, me?.id, me?.displayName);
 
   if (result.intent === "query_tasks" && me) {
-    const tasks = await runTaskQuery(me.id, result.query ?? {}, resolvers);
+    const tasks = await runTaskQuery(me.id, result.query ?? {}, resolvers, ws.id);
     return c.json({ intent: "query_tasks", answer: queryAnswer(result.query?.scope, tasks.length), tasks, drafts: [], questions: [] });
   }
 

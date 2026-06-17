@@ -1,6 +1,6 @@
 "use client";
 import { use, useEffect, useRef, useState } from "react";
-import Link from "next/link";
+import { WsLink } from "@/components/WsLink";
 import { useAuth } from "@/lib/store";
 import { useProjects, useProjectDetail, useTasks } from "@/lib/hooks";
 import { TaskItem } from "@/components/TaskItem";
@@ -42,7 +42,7 @@ function SectionContent({ tasks, view }: { tasks: Task[]; view: ProjectView }) {
         {tasks.map((t) => {
           const label = assigneeText(t);
           return (
-            <Link
+            <WsLink
               key={t.id}
               href={`/tasks/${t.id}`}
               className="grid grid-cols-[1fr_3.5rem_5rem] items-center gap-2 border-b border-border/40 px-3 py-3 text-sm last:border-0 active:bg-surface-2"
@@ -53,7 +53,7 @@ function SectionContent({ tasks, view }: { tasks: Task[]; view: ProjectView }) {
               </span>
               <span className="text-xs text-muted">{fmtDue(t.dueAt)}</span>
               <span className="text-xs text-muted">{STATUS_LABELS[t.status]}</span>
-            </Link>
+            </WsLink>
           );
         })}
       </div>
@@ -152,19 +152,19 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   return (
     <main className="px-4 pt-12">
-      <Link href="/projects" className="text-sm text-muted">‹ Проекты</Link>
+      <WsLink href="/projects" className="text-sm text-muted">‹ Проекты</WsLink>
       <header className="mb-4 mt-2 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="truncate text-2xl font-semibold">{project?.name ?? "Проект"}</h1>
           <p className="mt-1 text-sm text-muted">{active.length} активных · {done.length} готово</p>
         </div>
-        <Link
+        <WsLink
           href={`/projects/${id}/settings`}
           aria-label="Настройки проекта"
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface text-lg"
         >
           ⚙
-        </Link>
+        </WsLink>
       </header>
 
       <div className="mb-4 flex rounded-xl bg-surface p-0.5 text-sm">

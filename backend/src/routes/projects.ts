@@ -3,15 +3,24 @@ import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '../db/index.js';
 import { requireAuth } from '../lib/auth-middleware.js';
+import { requireWorkspace } from '../lib/workspace-middleware.js';
 
 export const projectRoutes = new Hono();
 projectRoutes.use('*', requireAuth);
+projectRoutes.use('*', requireWorkspace);
 
 const p = schema.projects;
 const pm = schema.projectMembers;
 const ps = schema.projectSections;
 
+// admin/owner ВНУТРИ воркспейса
 const isAdmin = (role: string) => role === 'admin' || role === 'owner';
+
+// Достать проект только в пределах текущего воркспейса (изоляция тенантов).
+async function getProject(id: string, workspaceId: string) {
+  const [project] = await db.select().from(p).where(and(eq(p.id, id), eq(p.workspaceId, workspaceId))).limit(1);
+  return project ?? null;
+}
 
 // ── создание ──────────────────────────────────────────────────────────────────
 const createSchema = z.object({
@@ -22,46 +31,49 @@ const createSchema = z.object({
 
 projectRoutes.post('/', async (c) => {
   const u = c.get('user');
+  const ws = c.get('workspace');
   const body = await c.req.json().catch(() => null);
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'bad_request' }, 400);
 
   const project = await db.transaction(async (tx) => {
     const [created] = await tx.insert(p).values({
+      workspaceId: ws.id,
       name: parsed.data.name,
       description: parsed.data.description ?? '',
       color: parsed.data.color ?? null,
       ownerId: u.sub,
     }).returning();
-    // Создатель — lead проекта.
-    await tx.insert(pm).values({ projectId: created!.id, userId: u.sub, role: 'lead' });
+    // Создатель — lead проекта, видит все задачи.
+    await tx.insert(pm).values({ projectId: created!.id, userId: u.sub, role: 'lead', accessScope: 'all' });
     return created!;
   });
 
   return c.json(project, 201);
 });
 
-// ── список (командные направления видны всем) ──────────────────────────────────
+// ── список (направления воркспейса видны всем его участникам) ───────────────────
 projectRoutes.get('/', async (c) => {
+  const ws = c.get('workspace');
   const includeArchived = c.req.query('archived') === '1';
-  const rows = await db
-    .select()
-    .from(p)
-    .where(includeArchived ? undefined : eq(p.isArchived, false))
-    .orderBy(p.name);
+  const conds = [eq(p.workspaceId, ws.id)];
+  if (!includeArchived) conds.push(eq(p.isArchived, false));
+  const rows = await db.select().from(p).where(and(...conds)).orderBy(p.name);
   return c.json(rows);
 });
 
 // ── один проект + участники ─────────────────────────────────────────────────────
 projectRoutes.get('/:id', async (c) => {
+  const ws = c.get('workspace');
   const id = c.req.param('id');
-  const [project] = await db.select().from(p).where(eq(p.id, id)).limit(1);
+  const project = await getProject(id, ws.id);
   if (!project) return c.json({ error: 'not_found' }, 404);
 
   const members = await db
     .select({
       userId: pm.userId,
       role: pm.role,
+      accessScope: pm.accessScope,
       displayName: schema.users.displayName,
       avatarUrl: schema.users.avatarUrl,
     })
@@ -77,10 +89,11 @@ projectRoutes.get('/:id', async (c) => {
 // ── разделы (секции) проекта ────────────────────────────────────────────────────
 projectRoutes.post('/:id/sections', async (c) => {
   const u = c.get('user');
+  const ws = c.get('workspace');
   const id = c.req.param('id');
-  const [project] = await db.select().from(p).where(eq(p.id, id)).limit(1);
+  const project = await getProject(id, ws.id);
   if (!project) return c.json({ error: 'not_found' }, 404);
-  if (project.ownerId !== u.sub && !isAdmin(u.role)) return c.json({ error: 'forbidden' }, 403);
+  if (project.ownerId !== u.sub && !isAdmin(ws.role)) return c.json({ error: 'forbidden' }, 403);
 
   const parsed = z.object({ name: z.string().min(1).max(200) }).safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: 'bad_request' }, 400);
@@ -93,10 +106,11 @@ projectRoutes.post('/:id/sections', async (c) => {
 
 projectRoutes.patch('/:id/sections/:sectionId', async (c) => {
   const u = c.get('user');
+  const ws = c.get('workspace');
   const id = c.req.param('id');
-  const [project] = await db.select().from(p).where(eq(p.id, id)).limit(1);
+  const project = await getProject(id, ws.id);
   if (!project) return c.json({ error: 'not_found' }, 404);
-  if (project.ownerId !== u.sub && !isAdmin(u.role)) return c.json({ error: 'forbidden' }, 403);
+  if (project.ownerId !== u.sub && !isAdmin(ws.role)) return c.json({ error: 'forbidden' }, 403);
 
   const parsed = z.object({ name: z.string().min(1).max(200).optional(), position: z.number().int().optional() })
     .safeParse(await c.req.json().catch(() => null));
@@ -107,16 +121,17 @@ projectRoutes.patch('/:id/sections/:sectionId', async (c) => {
 
 projectRoutes.delete('/:id/sections/:sectionId', async (c) => {
   const u = c.get('user');
+  const ws = c.get('workspace');
   const id = c.req.param('id');
-  const [project] = await db.select().from(p).where(eq(p.id, id)).limit(1);
+  const project = await getProject(id, ws.id);
   if (!project) return c.json({ error: 'not_found' }, 404);
-  if (project.ownerId !== u.sub && !isAdmin(u.role)) return c.json({ error: 'forbidden' }, 403);
+  if (project.ownerId !== u.sub && !isAdmin(ws.role)) return c.json({ error: 'forbidden' }, 403);
   // задачи раздела автоматически получают section_id=null (FK on delete set null)
   await db.delete(ps).where(and(eq(ps.id, c.req.param('sectionId')), eq(ps.projectId, id)));
   return c.json({ ok: true });
 });
 
-// ── правка (owner проекта или admin) ────────────────────────────────────────────
+// ── правка (owner проекта или admin воркспейса) ──────────────────────────────────
 const updateSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().max(2000).optional(),
@@ -126,10 +141,11 @@ const updateSchema = z.object({
 
 projectRoutes.patch('/:id', async (c) => {
   const u = c.get('user');
+  const ws = c.get('workspace');
   const id = c.req.param('id');
-  const [project] = await db.select().from(p).where(eq(p.id, id)).limit(1);
+  const project = await getProject(id, ws.id);
   if (!project) return c.json({ error: 'not_found' }, 404);
-  if (project.ownerId !== u.sub && !isAdmin(u.role)) return c.json({ error: 'forbidden' }, 403);
+  if (project.ownerId !== u.sub && !isAdmin(ws.role)) return c.json({ error: 'forbidden' }, 403);
 
   const body = await c.req.json().catch(() => null);
   const parsed = updateSchema.safeParse(body);
@@ -145,10 +161,11 @@ projectRoutes.patch('/:id', async (c) => {
 // ── архив (любой участник проекта; admin/owner — всегда) ─────────────────────────
 projectRoutes.post('/:id/archive', async (c) => {
   const u = c.get('user');
+  const ws = c.get('workspace');
   const id = c.req.param('id');
-  const [project] = await db.select().from(p).where(eq(p.id, id)).limit(1);
+  const project = await getProject(id, ws.id);
   if (!project) return c.json({ error: 'not_found' }, 404);
-  if (!isAdmin(u.role)) {
+  if (!isAdmin(ws.role)) {
     const [m] = await db.select({ id: pm.id }).from(pm).where(and(eq(pm.projectId, id), eq(pm.userId, u.sub))).limit(1);
     if (!m) return c.json({ error: 'forbidden' }, 403);
   }
@@ -158,14 +175,14 @@ projectRoutes.post('/:id/archive', async (c) => {
   return c.json(updated);
 });
 
-// ── удаление (только admin/owner) ────────────────────────────────────────────────
+// ── удаление (только admin/owner воркспейса) ──────────────────────────────────────
 // Каскад: участники и разделы удаляются (FK cascade); задачи проекта остаются,
 // но project_id обнуляется (FK set null) — становятся личными у создателей.
 projectRoutes.delete('/:id', async (c) => {
-  const u = c.get('user');
-  if (!isAdmin(u.role)) return c.json({ error: 'forbidden' }, 403);
+  const ws = c.get('workspace');
+  if (!isAdmin(ws.role)) return c.json({ error: 'forbidden' }, 403);
   const id = c.req.param('id');
-  const [project] = await db.select().from(p).where(eq(p.id, id)).limit(1);
+  const project = await getProject(id, ws.id);
   if (!project) return c.json({ error: 'not_found' }, 404);
   await db.delete(p).where(eq(p.id, id));
   return c.json({ ok: true });
@@ -174,23 +191,34 @@ projectRoutes.delete('/:id', async (c) => {
 // ── участники ──────────────────────────────────────────────────────────────────
 projectRoutes.post('/:id/members', async (c) => {
   const u = c.get('user');
+  const ws = c.get('workspace');
   const id = c.req.param('id');
-  const [project] = await db.select().from(p).where(eq(p.id, id)).limit(1);
+  const project = await getProject(id, ws.id);
   if (!project) return c.json({ error: 'not_found' }, 404);
-  if (project.ownerId !== u.sub && !isAdmin(u.role)) return c.json({ error: 'forbidden' }, 403);
+  if (project.ownerId !== u.sub && !isAdmin(ws.role)) return c.json({ error: 'forbidden' }, 403);
 
   const body = await c.req.json().catch(() => null);
   const parsed = z.object({
     userId: z.string().uuid(),
     role: z.enum(['lead', 'member']).optional(),
+    accessScope: z.enum(['own', 'all']).optional(),   // own = только свои, all = все задачи проекта (руководитель)
   }).safeParse(body);
   if (!parsed.success) return c.json({ error: 'bad_request' }, 400);
+  const role = parsed.data.role ?? 'member';
+  const accessScope = parsed.data.accessScope ?? 'own';
+
+  // Добавлять можно только участника этого воркспейса.
+  const [wsMember] = await db.select({ id: schema.workspaceMembers.id })
+    .from(schema.workspaceMembers)
+    .where(and(eq(schema.workspaceMembers.workspaceId, ws.id), eq(schema.workspaceMembers.userId, parsed.data.userId)))
+    .limit(1);
+  if (!wsMember) return c.json({ error: 'not_a_member' }, 400);
 
   const [member] = await db.insert(pm)
-    .values({ projectId: id, userId: parsed.data.userId, role: parsed.data.role ?? 'member' })
+    .values({ projectId: id, userId: parsed.data.userId, role, accessScope })
     .onConflictDoUpdate({
       target: [pm.projectId, pm.userId],
-      set: { role: parsed.data.role ?? 'member' },
+      set: { role, accessScope },
     })
     .returning();
   return c.json(member, 201);
@@ -199,13 +227,21 @@ projectRoutes.post('/:id/members', async (c) => {
 // Добавить команду целиком — её участники становятся участниками проекта.
 projectRoutes.post('/:id/team', async (c) => {
   const u = c.get('user');
+  const ws = c.get('workspace');
   const id = c.req.param('id');
-  const [project] = await db.select().from(p).where(eq(p.id, id)).limit(1);
+  const project = await getProject(id, ws.id);
   if (!project) return c.json({ error: 'not_found' }, 404);
-  if (project.ownerId !== u.sub && !isAdmin(u.role)) return c.json({ error: 'forbidden' }, 403);
+  if (project.ownerId !== u.sub && !isAdmin(ws.role)) return c.json({ error: 'forbidden' }, 403);
 
   const parsed = z.object({ teamId: z.string().uuid() }).safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: 'bad_request' }, 400);
+
+  // Команда должна принадлежать этому воркспейсу.
+  const [team] = await db.select({ id: schema.teams.id })
+    .from(schema.teams)
+    .where(and(eq(schema.teams.id, parsed.data.teamId), eq(schema.teams.workspaceId, ws.id)))
+    .limit(1);
+  if (!team) return c.json({ error: 'not_found' }, 404);
 
   const members = await db
     .select({ userId: schema.teamMembers.userId })
@@ -213,7 +249,7 @@ projectRoutes.post('/:id/team', async (c) => {
     .where(eq(schema.teamMembers.teamId, parsed.data.teamId));
   if (members.length) {
     await db.insert(pm)
-      .values(members.map((m) => ({ projectId: id, userId: m.userId, role: 'member' as const })))
+      .values(members.map((m) => ({ projectId: id, userId: m.userId, role: 'member' as const, accessScope: 'own' as const })))
       .onConflictDoNothing();
   }
   return c.json({ ok: true, added: members.length }, 201);
@@ -221,10 +257,11 @@ projectRoutes.post('/:id/team', async (c) => {
 
 projectRoutes.delete('/:id/members/:userId', async (c) => {
   const u = c.get('user');
+  const ws = c.get('workspace');
   const id = c.req.param('id');
-  const [project] = await db.select().from(p).where(eq(p.id, id)).limit(1);
+  const project = await getProject(id, ws.id);
   if (!project) return c.json({ error: 'not_found' }, 404);
-  if (project.ownerId !== u.sub && !isAdmin(u.role)) return c.json({ error: 'forbidden' }, 403);
+  if (project.ownerId !== u.sub && !isAdmin(ws.role)) return c.json({ error: 'forbidden' }, 403);
 
   await db.delete(pm).where(and(eq(pm.projectId, id), eq(pm.userId, c.req.param('userId'))));
   return c.json({ ok: true });

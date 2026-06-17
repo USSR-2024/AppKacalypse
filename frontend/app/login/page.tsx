@@ -20,7 +20,7 @@ export default function LoginPage() {
   function finish(token: string) {
     polling.current = false;
     setToken(token);
-    router.replace("/today");
+    router.replace("/");
   }
 
   // Вход через бота: получаем код, открываем бота, поллим обмен код→JWT.

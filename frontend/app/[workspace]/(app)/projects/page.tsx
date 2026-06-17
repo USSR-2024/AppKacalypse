@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import Link from "next/link";
+import { WsLink } from "@/components/WsLink";
 import { mutate as globalMutate } from "swr";
 import { api } from "@/lib/api";
 import { useAllProjects, useProjects } from "@/lib/hooks";
@@ -41,7 +41,7 @@ export default function ProjectsPage() {
       ) : (
         <div className="flex flex-col gap-2">
           {projects?.map((p) => (
-            <Link
+            <WsLink
               key={p.id}
               href={`/projects/${p.id}`}
               className="flex items-center gap-3 rounded-2xl bg-surface px-4 py-3.5"
@@ -49,7 +49,7 @@ export default function ProjectsPage() {
               <span className="h-3 w-3 rounded-full" style={{ background: p.color || "#4f8cff" }} />
               <span className="flex-1">{p.name}</span>
               <span className="text-muted">›</span>
-            </Link>
+            </WsLink>
           ))}
           {projects?.length === 0 && <p className="mt-8 text-center text-muted">Пока нет проектов</p>}
         </div>

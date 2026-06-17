@@ -1,5 +1,5 @@
 "use client";
-import Link from "next/link";
+import { WsLink } from "@/components/WsLink";
 import { isPast, isToday } from "date-fns";
 import { useAuth } from "@/lib/store";
 import { useTasks } from "@/lib/hooks";
@@ -41,9 +41,9 @@ export default function TodayPage() {
         <p className="text-sm text-muted">{me ? `Привет, ${me.displayName}` : " "}</p>
         <h1 className="text-2xl font-semibold">Сегодня</h1>
         </div>
-        <Link href="/done" className="rounded-xl bg-surface px-3 py-2 text-sm text-muted">
+        <WsLink href="/done" className="rounded-xl bg-surface px-3 py-2 text-sm text-muted">
           ✓ Выполненные
-        </Link>
+        </WsLink>
       </header>
 
       {isLoading ? (

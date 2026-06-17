@@ -1,20 +1,24 @@
 import { Hono } from 'hono';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '../db/index.js';
 import { requireAuth } from '../lib/auth-middleware.js';
+import { requireWorkspace } from '../lib/workspace-middleware.js';
 
 export const userRoutes = new Hono();
 userRoutes.use('*', requireAuth);
 
 const u = schema.users;
+const wm = schema.workspaceMembers;
 
-// ── список (для пикеров исполнителя) ────────────────────────────────────────────
-userRoutes.get('/', async (c) => {
+// ── список (для пикеров исполнителя) — только участники текущего воркспейса ───────
+userRoutes.get('/', requireWorkspace, async (c) => {
+  const ws = c.get('workspace');
   const rows = await db
-    .select({ id: u.id, displayName: u.displayName, avatarUrl: u.avatarUrl, role: u.role })
+    .select({ id: u.id, displayName: u.displayName, avatarUrl: u.avatarUrl, role: wm.role })
     .from(u)
-    .where(eq(u.isActive, true))
+    .innerJoin(wm, eq(wm.userId, u.id))
+    .where(and(eq(wm.workspaceId, ws.id), eq(u.isActive, true)))
     .orderBy(u.displayName);
   return c.json(rows);
 });

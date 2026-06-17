@@ -3,6 +3,7 @@ import { and, asc, desc, eq, gte, inArray, lte, or, type SQL } from 'drizzle-orm
 import { z } from 'zod';
 import { db, schema } from '../db/index.js';
 import { requireAuth } from '../lib/auth-middleware.js';
+import { requireWorkspace } from '../lib/workspace-middleware.js';
 import { logActivity } from '../lib/activity.js';
 import { withAssignees, assignedTaskIds, isAssignee, replaceAssignees, loadAssignees } from '../lib/assignees.js';
 import { notifyMentions, notifyAssigned } from '../lib/notify.js';
@@ -10,6 +11,7 @@ import type { SessionClaims } from '../lib/jwt.js';
 
 export const taskRoutes = new Hono();
 taskRoutes.use('*', requireAuth);
+taskRoutes.use('*', requireWorkspace);
 
 const STATUSES = ['queued', 'in_progress', 'done', 'cancelled', 'archived'] as const;
 const PRIORITIES = ['low', 'normal', 'high'] as const;
@@ -18,34 +20,35 @@ const SOURCES = ['app', 'telegram', 'email', 'calendar', 'ai'] as const;
 const t = schema.tasks;
 const tc = schema.taskComments;
 
-// Видит ли пользователь задачу (создатель/контролёр/исполнитель/член проекта; admin/owner — всё).
-async function canView(task: { id: string; creatorId: string; controllerId: string | null; projectId: string | null }, u: SessionClaims): Promise<boolean> {
-  if (u.role === 'owner' || u.role === 'admin') return true;
+// Видит ли пользователь задачу (создатель/контролёр/исполнитель/член проекта; admin/owner воркспейса — всё).
+async function canView(task: { id: string; creatorId: string; controllerId: string | null; projectId: string | null }, u: SessionClaims, wsRole: string): Promise<boolean> {
+  if (wsRole === 'owner' || wsRole === 'admin') return true;
   if (task.creatorId === u.sub || task.controllerId === u.sub) return true;
   if (await isAssignee(task.id, u.sub)) return true;
   if (task.projectId && (await myProjectIds(u.sub)).includes(task.projectId)) return true;
   return false;
 }
 
-// Менять задачу может создатель, контролёр, любой исполнитель, admin/owner.
-async function canModify(task: { id: string; creatorId: string; controllerId: string | null }, u: SessionClaims): Promise<boolean> {
-  if (task.creatorId === u.sub || task.controllerId === u.sub || u.role === 'admin' || u.role === 'owner') return true;
+// Менять задачу может создатель, контролёр, любой исполнитель, admin/owner воркспейса.
+async function canModify(task: { id: string; creatorId: string; controllerId: string | null }, u: SessionClaims, wsRole: string): Promise<boolean> {
+  if (task.creatorId === u.sub || task.controllerId === u.sub || wsRole === 'admin' || wsRole === 'owner') return true;
   return isAssignee(task.id, u.sub);
 }
 
-// Проекты, где пользователь — участник (для видимости проектных задач).
+// Проекты, где пользователь видит ВСЕ задачи (accessScope='all' — руководитель/lead).
+// Участники с accessScope='own' видят только свои задачи (через creator/controller/assignee).
 async function myProjectIds(userId: string): Promise<string[]> {
   const rows = await db
     .select({ pid: schema.projectMembers.projectId })
     .from(schema.projectMembers)
-    .where(eq(schema.projectMembers.userId, userId));
+    .where(and(eq(schema.projectMembers.userId, userId), eq(schema.projectMembers.accessScope, 'all')));
   return rows.map((r) => r.pid);
 }
 
 // Видимость: member видит задачи, где он автор/контролёр/исполнитель или член проекта.
 // owner/admin видят всё (надзор). Возвращает null, если ограничение не нужно.
-async function visibilityCond(u: SessionClaims): Promise<SQL | null> {
-  if (u.role === 'owner' || u.role === 'admin') return null;
+async function visibilityCond(u: SessionClaims, wsRole: string): Promise<SQL | null> {
+  if (wsRole === 'owner' || wsRole === 'admin') return null;
   const pids = await myProjectIds(u.sub);
   const ors: SQL[] = [eq(t.creatorId, u.sub), eq(t.controllerId, u.sub), inArray(t.id, assignedTaskIds(u.sub))];
   if (pids.length) ors.push(inArray(t.projectId, pids));
@@ -71,6 +74,7 @@ const createSchema = z.object({
 
 taskRoutes.post('/', async (c) => {
   const u = c.get('user');
+  const ws = c.get('workspace');
   const body = await c.req.json().catch(() => null);
   const p = createSchema.safeParse(body);
   if (!p.success) return c.json({ error: 'bad_request', details: p.error.flatten() }, 400);
@@ -82,6 +86,7 @@ taskRoutes.post('/', async (c) => {
 
   const task = await db.transaction(async (tx) => {
     const [created] = await tx.insert(t).values({
+      workspaceId: ws.id,
       title: d.title,
       description: d.description ?? '',
       projectId: d.projectId ?? null,
@@ -113,8 +118,9 @@ taskRoutes.post('/', async (c) => {
 // &dueBefore=ISO &dueAfter=ISO
 taskRoutes.get('/', async (c) => {
   const u = c.get('user');
+  const ws = c.get('workspace');
   const q = c.req.query();
-  const conds: SQL[] = [];
+  const conds: SQL[] = [eq(t.workspaceId, ws.id)];
 
   if (q.mine === '1') conds.push(or(eq(t.controllerId, u.sub), inArray(t.id, assignedTaskIds(u.sub)))!);
   else if (q.assigneeId) conds.push(inArray(t.id, assignedTaskIds(q.assigneeId)));
@@ -130,13 +136,13 @@ taskRoutes.get('/', async (c) => {
   if (q.dueBefore) conds.push(lte(t.dueAt, new Date(q.dueBefore)));
   if (q.dueAfter) conds.push(gte(t.dueAt, new Date(q.dueAfter)));
 
-  const vis = await visibilityCond(u);
+  const vis = await visibilityCond(u, ws.role);
   if (vis) conds.push(vis);
 
   const rows = await db
     .select()
     .from(t)
-    .where(conds.length ? and(...conds) : undefined)
+    .where(and(...conds))
     .orderBy(desc(t.isImportant), asc(t.dueAt), desc(t.priority), desc(t.createdAt))
     .limit(500);
 
@@ -146,9 +152,10 @@ taskRoutes.get('/', async (c) => {
 // ── одна задача ───────────────────────────────────────────────────────────────
 taskRoutes.get('/:id', async (c) => {
   const u = c.get('user');
-  const [task] = await db.select().from(t).where(eq(t.id, c.req.param('id'))).limit(1);
+  const ws = c.get('workspace');
+  const [task] = await db.select().from(t).where(and(eq(t.id, c.req.param('id')), eq(t.workspaceId, ws.id))).limit(1);
   if (!task) return c.json({ error: 'not_found' }, 404);
-  if (!(await canView(task, u))) return c.json({ error: 'not_found' }, 404);
+  if (!(await canView(task, u, ws.role))) return c.json({ error: 'not_found' }, 404);
   const [withA] = await withAssignees([task]);
   return c.json(withA);
 });
@@ -156,9 +163,10 @@ taskRoutes.get('/:id', async (c) => {
 // ── комментарии задачи ────────────────────────────────────────────────────────
 taskRoutes.get('/:id/comments', async (c) => {
   const u = c.get('user');
-  const [task] = await db.select().from(t).where(eq(t.id, c.req.param('id'))).limit(1);
+  const ws = c.get('workspace');
+  const [task] = await db.select().from(t).where(and(eq(t.id, c.req.param('id')), eq(t.workspaceId, ws.id))).limit(1);
   if (!task) return c.json({ error: 'not_found' }, 404);
-  if (!(await canView(task, u))) return c.json({ error: 'not_found' }, 404);
+  if (!(await canView(task, u, ws.role))) return c.json({ error: 'not_found' }, 404);
 
   const rows = await db
     .select({
@@ -180,9 +188,10 @@ taskRoutes.get('/:id/comments', async (c) => {
 
 taskRoutes.post('/:id/comments', async (c) => {
   const u = c.get('user');
-  const [task] = await db.select().from(t).where(eq(t.id, c.req.param('id'))).limit(1);
+  const ws = c.get('workspace');
+  const [task] = await db.select().from(t).where(and(eq(t.id, c.req.param('id')), eq(t.workspaceId, ws.id))).limit(1);
   if (!task) return c.json({ error: 'not_found' }, 404);
-  if (!(await canView(task, u))) return c.json({ error: 'not_found' }, 404);
+  if (!(await canView(task, u, ws.role))) return c.json({ error: 'not_found' }, 404);
 
   const p = z.object({
     body: z.string().min(1).max(2000),
@@ -230,10 +239,11 @@ const updateSchema = z.object({
 
 taskRoutes.patch('/:id', async (c) => {
   const u = c.get('user');
+  const ws = c.get('workspace');
   const id = c.req.param('id');
-  const [task] = await db.select().from(t).where(eq(t.id, id)).limit(1);
+  const [task] = await db.select().from(t).where(and(eq(t.id, id), eq(t.workspaceId, ws.id))).limit(1);
   if (!task) return c.json({ error: 'not_found' }, 404);
-  if (!(await canModify(task, u))) return c.json({ error: 'forbidden' }, 403);
+  if (!(await canModify(task, u, ws.role))) return c.json({ error: 'forbidden' }, 403);
 
   const body = await c.req.json().catch(() => null);
   const p = updateSchema.safeParse(body);
@@ -279,14 +289,15 @@ taskRoutes.patch('/:id', async (c) => {
 // ── смена статуса ─────────────────────────────────────────────────────────────
 taskRoutes.post('/:id/status', async (c) => {
   const u = c.get('user');
+  const ws = c.get('workspace');
   const id = c.req.param('id');
   const body = await c.req.json().catch(() => null);
   const p = z.object({ status: z.enum(STATUSES) }).safeParse(body);
   if (!p.success) return c.json({ error: 'bad_request' }, 400);
 
-  const [task] = await db.select().from(t).where(eq(t.id, id)).limit(1);
+  const [task] = await db.select().from(t).where(and(eq(t.id, id), eq(t.workspaceId, ws.id))).limit(1);
   if (!task) return c.json({ error: 'not_found' }, 404);
-  if (!(await canModify(task, u))) return c.json({ error: 'forbidden' }, 403);
+  if (!(await canModify(task, u, ws.role))) return c.json({ error: 'forbidden' }, 403);
   if (task.status === p.data.status) return c.json(task);
 
   const [updated] = await db.update(t).set({
@@ -303,10 +314,11 @@ taskRoutes.post('/:id/status', async (c) => {
 // ── удаление ──────────────────────────────────────────────────────────────────
 taskRoutes.delete('/:id', async (c) => {
   const u = c.get('user');
+  const ws = c.get('workspace');
   const id = c.req.param('id');
-  const [task] = await db.select().from(t).where(eq(t.id, id)).limit(1);
+  const [task] = await db.select().from(t).where(and(eq(t.id, id), eq(t.workspaceId, ws.id))).limit(1);
   if (!task) return c.json({ error: 'not_found' }, 404);
-  if (!(await canModify(task, u))) return c.json({ error: 'forbidden' }, 403);
+  if (!(await canModify(task, u, ws.role))) return c.json({ error: 'forbidden' }, 403);
 
   await db.delete(t).where(eq(t.id, id));
   return c.json({ ok: true });

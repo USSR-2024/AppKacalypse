@@ -1,6 +1,6 @@
 "use client";
 import useSWR from "swr";
-import Link from "next/link";
+import { WsLink } from "@/components/WsLink";
 import { fetcher, api } from "@/lib/api";
 import { useAuth } from "@/lib/store";
 import { Avatar } from "@/components/Avatar";
@@ -15,7 +15,7 @@ export default function UsersPage() {
   if (me && me.role !== "owner" && me.role !== "admin") {
     return (
       <main className="px-4 pt-12">
-        <Link href="/profile" className="text-sm text-muted">‹ Профиль</Link>
+        <WsLink href="/profile" className="text-sm text-muted">‹ Профиль</WsLink>
         <p className="mt-6 text-muted">Доступ только для владельца.</p>
       </main>
     );
@@ -28,7 +28,7 @@ export default function UsersPage() {
 
   return (
     <main className="px-4 pt-12">
-      <Link href="/profile" className="text-sm text-muted">‹ Профиль</Link>
+      <WsLink href="/profile" className="text-sm text-muted">‹ Профиль</WsLink>
       <h1 className="mb-4 mt-2 text-2xl font-semibold">Пользователи</h1>
 
       {isLoading ? (

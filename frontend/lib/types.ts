@@ -53,6 +53,7 @@ export interface Project {
 export interface ProjectMember {
   userId: string;
   role: string;
+  accessScope: "own" | "all";
   displayName: string;
   avatarUrl: string | null;
 }

@@ -13,6 +13,13 @@ export const authProvider = pgEnum('auth_provider', ['telegram', 'email']);
 // Роль участника внутри проекта/направления
 export const projectMemberRole = pgEnum('project_member_role', ['lead', 'member']);
 
+// Доступ участника к задачам проекта: own = только свои, all = все задачи проекта
+// (руководитель видит всё, не будучи добавленным в задачу).
+export const projectAccess = pgEnum('project_access', ['own', 'all']);
+
+// Роль участника внутри воркспейса (компании). owner = создатель пространства.
+export const workspaceRole = pgEnum('workspace_role', ['owner', 'admin', 'member']);
+
 // Статусы задачи (ТЗ: в очереди / выполняется / готово / отменено / архив)
 export const taskStatus = pgEnum('task_status', [
   'queued',       // в очереди
@@ -81,10 +88,42 @@ export const authIdentities = pgTable('auth_identities', {
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
+// workspaces — арендатор (компания/команда). URL: /<slug>. Изоляция данных по
+// workspace_id на core-таблицах (tasks/projects/teams).
+// ─────────────────────────────────────────────────────────────────────────────
+export const workspaces = pgTable('workspaces', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  slug: text('slug').notNull(),               // часть URL, латиница/цифры/дефис
+  name: text('name').notNull(),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  slugUnique: unique('workspace_slug_unique').on(t.slug),
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// workspace_members — членство юзера в воркспейсе и роль внутри него.
+// Один юзер может состоять в нескольких компаниях.
+// ─────────────────────────────────────────────────────────────────────────────
+export const workspaceMembers = pgTable('workspace_members', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  role: workspaceRole('role').notNull().default('member'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  workspaceUserUnique: unique('workspace_member_unique').on(t.workspaceId, t.userId),
+  workspaceIdx: index('workspace_members_workspace_idx').on(t.workspaceId),
+  userIdx: index('workspace_members_user_idx').on(t.userId),
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
 // projects — направления (напр. «Контроль текущих проектов»). null у задачи = личная/Inbox.
 // ─────────────────────────────────────────────────────────────────────────────
 export const projects = pgTable('projects', {
   id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
   description: text('description').notNull().default(''),
   color: text('color'),                       // для UI/досок
@@ -92,7 +131,9 @@ export const projects = pgTable('projects', {
   isArchived: boolean('is_archived').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+  workspaceIdx: index('projects_workspace_idx').on(t.workspaceId),
+}));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // project_members — кто в команде проекта и с какой ролью.
@@ -102,6 +143,9 @@ export const projectMembers = pgTable('project_members', {
   projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   role: projectMemberRole('role').notNull().default('member'),
+  // Доступ к задачам проекта: own = только свои, all = все. Default 'all' — сохраняет
+  // прежнее поведение для уже существующих участников (раньше член проекта видел всё).
+  accessScope: projectAccess('access_scope').notNull().default('all'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   projectUserUnique: unique('project_member_unique').on(t.projectId, t.userId),
@@ -128,6 +172,7 @@ export const projectSections = pgTable('project_sections', {
 // ─────────────────────────────────────────────────────────────────────────────
 export const tasks = pgTable('tasks', {
   id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
   title: text('title').notNull(),
   description: text('description').notNull().default(''),
 
@@ -156,6 +201,7 @@ export const tasks = pgTable('tasks', {
   projectIdx: index('tasks_project_idx').on(t.projectId),
   statusIdx: index('tasks_status_idx').on(t.status),
   dueIdx: index('tasks_due_idx').on(t.dueAt),
+  workspaceIdx: index('tasks_workspace_idx').on(t.workspaceId),
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -247,10 +293,13 @@ export const botLoginCodes = pgTable('bot_login_codes', {
 // ─────────────────────────────────────────────────────────────────────────────
 export const teams = pgTable('teams', {
   id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
   ownerId: uuid('owner_id').notNull().references(() => users.id),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+  workspaceIdx: index('teams_workspace_idx').on(t.workspaceId),
+}));
 
 export const teamMembers = pgTable('team_members', {
   id: uuid('id').primaryKey().defaultRandom(),

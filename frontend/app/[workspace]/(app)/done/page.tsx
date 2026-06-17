@@ -1,5 +1,5 @@
 "use client";
-import Link from "next/link";
+import { WsLink } from "@/components/WsLink";
 import { useTasks } from "@/lib/hooks";
 import { TaskItem } from "@/components/TaskItem";
 
@@ -9,7 +9,7 @@ export default function DonePage() {
 
   return (
     <main className="px-4 pt-12">
-      <Link href="/profile" className="text-sm text-muted">‹ Профиль</Link>
+      <WsLink href="/profile" className="text-sm text-muted">‹ Профиль</WsLink>
       <header className="mb-6 mt-2">
         <h1 className="text-2xl font-semibold">Выполненные</h1>
         <p className="mt-1 text-sm text-muted">Готовые, отменённые и архив</p>

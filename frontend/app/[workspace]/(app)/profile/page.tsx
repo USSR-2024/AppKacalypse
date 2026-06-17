@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { WsLink } from "@/components/WsLink";
 import { mutate } from "swr";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/store";
@@ -152,26 +152,26 @@ export default function ProfilePage() {
         </div>
       </section>
 
-      <Link href="/done" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
+      <WsLink href="/done" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
         <span>✓ Выполненные задачи</span>
         <span className="text-muted">›</span>
-      </Link>
+      </WsLink>
 
-      <Link href="/team" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
+      <WsLink href="/team" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
         <span>👥 Команда</span>
         <span className="text-muted">›</span>
-      </Link>
+      </WsLink>
 
       {(draft.role === "owner" || draft.role === "admin") && (
         <>
-          <Link href="/broadcast" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
+          <WsLink href="/broadcast" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
             <span>📣 Уведомить об обновлении</span>
             <span className="text-muted">›</span>
-          </Link>
-          <Link href="/users" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
+          </WsLink>
+          <WsLink href="/users" className="mb-3 flex items-center justify-between rounded-2xl bg-surface px-4 py-3.5">
             <span>⚙️ Управление пользователями</span>
             <span className="text-muted">›</span>
-          </Link>
+          </WsLink>
         </>
       )}
 

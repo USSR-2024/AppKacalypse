@@ -1,7 +1,9 @@
 import { and, eq } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
 import { db, schema } from "../db/index.js";
+import { env } from "./env.js";
 import { findOrCreateUser } from "./users.js";
+import { resolveUserWorkspaceId } from "./workspace-middleware.js";
 import { logActivity } from "./activity.js";
 import { notifyAssigned } from "./notify.js";
 import {
@@ -13,7 +15,7 @@ import {
   type TaskRow,
 } from "./assistant-core.js";
 
-const APP_URL = "https://appkacalypse.baassist.ru";
+const APP_URL = env.PUBLIC_APP_URL;
 
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -187,6 +189,12 @@ export async function processUpdate(update: TgUpdate): Promise<void> {
   if (!user.isActive) { await sendMessage(chatId, "Доступ приостановлен администратором."); return; }
   const tz = user.timezone;
 
+  const workspaceId = await resolveUserWorkspaceId(user.id);
+  if (!workspaceId) {
+    await sendMessage(chatId, "Ты ещё не в пространстве. Открой приложение и зайди в своё пространство, затем вернись в бота.");
+    return;
+  }
+
   // ── Кнопки меню (перехват до отправки в модель) ──────────────────────────────
   if (text === BTN.newTask) {
     await db.delete(schema.botSessions).where(eq(schema.botSessions.telegramId, tgId));
@@ -195,8 +203,8 @@ export async function processUpdate(update: TgUpdate): Promise<void> {
   }
   if (text === BTN.today) {
     await db.delete(schema.botSessions).where(eq(schema.botSessions.telegramId, tgId));
-    const resolvers = await loadResolvers(user.id, user.displayName);
-    const tasks = await runTaskQuery(user.id, { scope: "today" }, resolvers);
+    const resolvers = await loadResolvers(workspaceId, user.id, user.displayName);
+    const tasks = await runTaskQuery(user.id, { scope: "today" }, resolvers, workspaceId);
     const head = queryAnswer("today", tasks.length);
     await sendMessage(chatId, tasks.length ? `${head}\n${formatTaskList(tasks, tz)}` : head);
     return;
@@ -246,12 +254,12 @@ export async function processUpdate(update: TgUpdate): Promise<void> {
     return;
   }
 
-  const resolvers = await loadResolvers(user.id, user.displayName);
+  const resolvers = await loadResolvers(workspaceId, user.id, user.displayName);
 
   // ── Вопрос ────────────────────────────────────────────────────────────────
   if (result.intent === "query_tasks") {
     await db.delete(schema.botSessions).where(eq(schema.botSessions.telegramId, tgId));
-    const tasks = await runTaskQuery(user.id, result.query ?? {}, resolvers);
+    const tasks = await runTaskQuery(user.id, result.query ?? {}, resolvers, workspaceId);
     const head = queryAnswer(result.query?.scope, tasks.length);
     await sendMessage(chatId, tasks.length ? `${head}\n${formatTaskList(tasks, tz)}` : head);
     return;
@@ -282,10 +290,12 @@ export async function processUpdate(update: TgUpdate): Promise<void> {
   const lines: string[] = [];
   for (const gt of gTasks) {
     const projectId = resolvers.resolveProject(gt.project as string | null);
-    const assigneeId = resolvers.resolveAssignee(gt.assignee as string | null) ?? user.id;
+    const assigneeName = (gt.assignee as string | null) ?? null;
+    const assigneeId = resolvers.resolveAssignee(assigneeName);
     const [task] = await db
       .insert(schema.tasks)
       .values({
+        workspaceId,
         title: String(gt.title ?? "Задача"),
         description: String(gt.description ?? ""),
         projectId,
@@ -297,9 +307,17 @@ export async function processUpdate(update: TgUpdate): Promise<void> {
         source: "telegram",
       })
       .returning();
-    await db.insert(schema.taskAssignees).values({ taskId: task!.id, userId: assigneeId });
+    // Исполнитель: распознанный участник → userId; нераспознанное имя → внешний (как в вебе);
+    // никого не указали → ставим на постановщика.
+    if (assigneeId) {
+      await db.insert(schema.taskAssignees).values({ taskId: task!.id, userId: assigneeId });
+    } else if (assigneeName) {
+      await db.insert(schema.taskAssignees).values({ taskId: task!.id, externalName: assigneeName });
+    } else {
+      await db.insert(schema.taskAssignees).values({ taskId: task!.id, userId: user.id });
+    }
     await logActivity({ taskId: task!.id, actorId: user.id, type: "created" });
-    if (assigneeId !== user.id) {
+    if (assigneeId && assigneeId !== user.id) {
       await notifyAssigned(task!.id, task!.title, user.displayName, [assigneeId], user.id);
     }
     const due = task!.dueAt ? ` — 🕑 ${fmtDate(task!.dueAt, tz)}` : "";

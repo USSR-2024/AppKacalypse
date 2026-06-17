@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import Link from "next/link";
+import { WsLink } from "@/components/WsLink";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/store";
 import { useUsers, useBroadcasts, useChangelog } from "@/lib/hooks";
@@ -90,7 +90,7 @@ export default function BroadcastPage() {
 
   return (
     <main className="px-4 pt-12">
-      <Link href="/profile" className="text-sm text-muted">‹ Профиль</Link>
+      <WsLink href="/profile" className="text-sm text-muted">‹ Профиль</WsLink>
       <header className="mb-5 mt-2">
         <h1 className="text-2xl font-semibold">📣 Уведомить об обновлении</h1>
         <p className="mt-1 text-sm text-muted">Ручная рассылка всем пользователям. Только для крупных апдейтов.</p>

@@ -9,6 +9,9 @@ const schema = z.object({
   TELEGRAM_AUTH_MAX_AGE: z.coerce.number().default(86400),
   TELEGRAM_WEBHOOK_SECRET: z.string().default(''),
   GATEWAY_URL: z.string().url().default('http://llm-gateway:8000'),
+  // Публичный URL приложения (для ссылок из бота/уведомлений). Путь к задаче:
+  // ${PUBLIC_APP_URL}/<workspace-slug>/tasks/<id>.
+  PUBLIC_APP_URL: z.string().url().default('https://appka.space'),
   VAPID_PUBLIC_KEY: z.string().default(''),
   VAPID_PRIVATE_KEY: z.string().default(''),
   VAPID_SUBJECT: z.string().default('mailto:owner@baassist.ru'),

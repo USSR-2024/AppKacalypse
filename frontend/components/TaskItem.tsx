@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import Link from "next/link";
+import { WsLink } from "@/components/WsLink";
 import { format, isPast, isToday } from "date-fns";
 import { ru } from "date-fns/locale";
 import { api } from "@/lib/api";
@@ -66,7 +66,7 @@ export function TaskItem({ task }: { task: Task }) {
         />
       )}
 
-      <Link href={`/tasks/${task.id}`} className="min-w-0 flex-1">
+      <WsLink href={`/tasks/${task.id}`} className="min-w-0 flex-1">
         <div className={`text-[15px] leading-tight ${done ? "text-muted line-through" : ""}`}>
           {task.isImportant && <span className="mr-1 text-warn">★</span>}
           {task.title}
@@ -86,7 +86,7 @@ export function TaskItem({ task }: { task: Task }) {
           )}
           {task.priority === "high" && <span className="text-danger">!высокий</span>}
         </div>
-      </Link>
+      </WsLink>
     </div>
   );
 }

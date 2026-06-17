@@ -26,7 +26,7 @@ function AuthInner() {
         const data = await res.json().catch(() => ({}));
         if (!cancelled && data.token) {
           setToken(data.token);
-          router.replace("/today");
+          router.replace("/");
         } else if (!cancelled) {
           setErr(true);
         }
