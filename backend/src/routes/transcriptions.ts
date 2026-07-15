@@ -23,6 +23,16 @@ const dir = (id: string) => join(env.TRANSCRIBE_DATA_DIR, id);
 const TMP = join(env.TRANSCRIBE_DATA_DIR, '.tmp');
 const STALE_UPLOAD_MS = 24 * 60 * 60 * 1000;
 
+/** Исходник после успешной расшифровки не нужен: наружу отдаются только
+ *  транскрипт и протокол, плеера нет, а протокол собирается из transcript.txt.
+ *  Оставлять гигабайты записей встреч на диске — и лишнее место, и лишние данные.
+ *  При провале НЕ трогаем: с ним ещё разбираться. */
+async function dropSourceAudio(id: string) {
+  for (const name of await readdir(dir(id)).catch(() => [] as string[])) {
+    if (name.startsWith('audio.')) await rm(join(dir(id), name), { force: true }).catch(() => {});
+  }
+}
+
 /** Убрать обрывки: если соединение упало или бэк перезапустился на середине
  *  загрузки, .tmp-файл остаётся навсегда. Гигабайтные, копятся молча. */
 async function sweepStaleUploads() {
@@ -215,6 +225,7 @@ transcribeWorkerRoutes.post('/:id/result', async (c) => {
   if (kind === 'transcribe') {
     await db.update(tr).set({ status: ok ? 'transcribed' : 'failed', error: ok ? null : (error ?? 'ошибка'), updatedAt: new Date() })
       .where(eq(tr.id, id));
+    if (ok) await dropSourceAudio(id);
   } else {
     await db.update(tr).set({ protocolStatus: ok ? 'ready' : 'failed', error: ok ? null : (error ?? 'ошибка'), updatedAt: new Date() })
       .where(eq(tr.id, id));
