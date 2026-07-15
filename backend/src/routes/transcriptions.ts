@@ -1,7 +1,12 @@
 import { Hono } from 'hono';
 import { and, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm, rename, readdir, stat } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
+import { Readable } from 'node:stream';
+import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
+import { randomUUID } from 'node:crypto';
 import { join, extname } from 'node:path';
 import type { Context, Next } from 'hono';
 import { db, schema } from '../db/index.js';
@@ -12,6 +17,22 @@ import { env } from '../lib/env.js';
 const tr = schema.transcriptions;
 
 const dir = (id: string) => join(env.TRANSCRIBE_DATA_DIR, id);
+
+// Незавершённые загрузки. Лежат на том же томе, что и data — иначе rename()
+// в конце загрузки станет копированием через границу ФС.
+const TMP = join(env.TRANSCRIBE_DATA_DIR, '.tmp');
+const STALE_UPLOAD_MS = 24 * 60 * 60 * 1000;
+
+/** Убрать обрывки: если соединение упало или бэк перезапустился на середине
+ *  загрузки, .tmp-файл остаётся навсегда. Гигабайтные, копятся молча. */
+async function sweepStaleUploads() {
+  const now = Date.now();
+  for (const name of await readdir(TMP).catch(() => [] as string[])) {
+    const p = join(TMP, name);
+    const s = await stat(p).catch(() => null);
+    if (s && now - s.mtimeMs > STALE_UPLOAD_MS) await rm(p, { force: true }).catch(() => {});
+  }
+}
 
 // Расшифровки доступны только владельцу пространства.
 async function requireWsOwner(c: Context, next: Next) {
@@ -39,22 +60,55 @@ transcriptionRoutes.get('/', async (c) => {
   return c.json(rows);
 });
 
-// Загрузить аудио (multipart). Кладём файл на общий том, создаём задачу queued.
-transcriptionRoutes.post('/', async (c) => {
+// Загрузить аудио/видео. Тело — СЫРОЙ поток файла, не multipart: пишем его на
+// диск чанками, память не зависит от размера. Через parseBody() файл целиком
+// оседал в RAM (2.6 ГБ → ~5 ГБ пика и 500 через 4 минуты). Имя и язык — в query.
+//
+// Задачу в БД создаём ПОСЛЕ того, как файл лёг на диск: строка сразу видна
+// воркеру как queued, и он заклеймил бы её, пока файл ещё льётся.
+transcriptionRoutes.put('/', async (c) => {
   const w = c.get('workspace');
   const u = c.get('user');
-  const body = await c.req.parseBody();
-  const file = body['file'];
-  const lang = z.enum(['auto', 'ru', 'es']).catch('auto').parse(body['lang']);
-  if (!(file instanceof File) || file.size === 0) return c.json({ error: 'file_required' }, 400);
+  const q = z.object({
+    filename: z.string().trim().min(1).max(200),
+    lang: z.enum(['auto', 'ru', 'es']).catch('auto'),
+  }).safeParse({ filename: c.req.query('filename'), lang: c.req.query('lang') });
+  if (!q.success) return c.json({ error: 'bad_request' }, 400);
+
+  const body = c.req.raw.body;
+  if (!body) return c.json({ error: 'file_required' }, 400);
+
+  await sweepStaleUploads();
+  await mkdir(TMP, { recursive: true });
+  const ext = (extname(q.data.filename) || '.m4a').toLowerCase();
+  const tmp = join(TMP, randomUUID() + ext);
+
+  try {
+    await pipeline(Readable.fromWeb(body as NodeReadableStream), createWriteStream(tmp));
+  } catch {
+    await rm(tmp, { force: true }).catch(() => {});
+    return c.json({ error: 'upload_failed' }, 500);   // связь оборвалась на середине
+  }
+
+  const size = (await stat(tmp).catch(() => null))?.size ?? 0;
+  if (size === 0) {
+    await rm(tmp, { force: true }).catch(() => {});
+    return c.json({ error: 'file_required' }, 400);
+  }
 
   const [row] = await db.insert(tr)
-    .values({ workspaceId: w.id, userId: u.sub, filename: file.name.slice(0, 200), lang })
+    .values({ workspaceId: w.id, userId: u.sub, filename: q.data.filename, lang: q.data.lang })
     .returning({ id: tr.id });
-
-  const ext = (extname(file.name) || '.m4a').toLowerCase();
-  await mkdir(dir(row!.id), { recursive: true });
-  await writeFile(join(dir(row!.id), 'audio' + ext), Buffer.from(await file.arrayBuffer()));
+  try {
+    await mkdir(dir(row!.id), { recursive: true });
+    await rename(tmp, join(dir(row!.id), 'audio' + ext));
+  } catch {
+    // Файл не доехал до места — строка без аудио навсегда осталась бы queued.
+    await db.delete(tr).where(eq(tr.id, row!.id));
+    await rm(tmp, { force: true }).catch(() => {});
+    await rm(dir(row!.id), { recursive: true, force: true }).catch(() => {});
+    return c.json({ error: 'upload_failed' }, 500);
+  }
 
   return c.json({ id: row!.id }, 201);
 });

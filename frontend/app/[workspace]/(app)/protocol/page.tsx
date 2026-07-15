@@ -22,33 +22,46 @@ export default function ProtocolPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [lang, setLang] = useState<string>("auto");
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);   // 0..1, только пока идёт отправка
   const [err, setErr] = useState<string | null>(null);
 
   const { data, mutate } = useSWR<Transcription[]>("/transcriptions", fetcher, {
     refreshInterval: (rows) => (rows?.some(isBusy) ? 4000 : 0),
   });
 
+  // Отправляем файл сырым телом PUT. XHR, а не fetch — только он даёт события
+  // прогресса, а встреча на пару гигабайт заливается не одну минуту.
   async function upload() {
     const file = fileRef.current?.files?.[0];
     if (!file || uploading) return;
     setErr(null);
     setUploading(true);
+    setProgress(0);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("lang", lang);
-      const res = await fetch("/api/transcriptions", {
-        method: "POST",
-        headers: { authorization: `Bearer ${useAuth.getState().token}`, "x-workspace": ws },
-        body: fd,
+      await new Promise<void>((resolve, reject) => {
+        const qs = new URLSearchParams({ filename: file.name, lang });
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", `/api/transcriptions?${qs}`);
+        xhr.setRequestHeader("authorization", `Bearer ${useAuth.getState().token}`);
+        xhr.setRequestHeader("x-workspace", ws);
+        xhr.upload.onprogress = (e) => { if (e.lengthComputable) setProgress(e.loaded / e.total); };
+        xhr.onload = () => {
+          if (xhr.status === 201) return resolve();
+          let msg = "ошибка загрузки";
+          try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
+          reject(new Error(msg));
+        };
+        xhr.onerror = () => reject(new Error("связь оборвалась — попробуйте ещё раз"));
+        xhr.onabort = () => reject(new Error("загрузка отменена"));
+        xhr.send(file);
       });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "ошибка загрузки");
       if (fileRef.current) fileRef.current.value = "";
       mutate();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "ошибка загрузки");
     } finally {
       setUploading(false);
+      setProgress(0);
     }
   }
 
@@ -82,9 +95,17 @@ export default function ProtocolPage() {
             disabled={uploading}
             className="flex-1 rounded-xl bg-accent px-4 py-2.5 text-sm font-medium text-white disabled:opacity-40"
           >
-            {uploading ? "Загрузка…" : "Загрузить и расшифровать"}
+            {uploading ? `Загрузка… ${Math.round(progress * 100)}%` : "Загрузить и расшифровать"}
           </button>
         </div>
+        {uploading && (
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-surface-2">
+            <div
+              className="h-full rounded-full bg-accent transition-[width] duration-200"
+              style={{ width: `${Math.round(progress * 100)}%` }}
+            />
+          </div>
+        )}
         {err && <p className="mt-2 text-sm text-danger">{err}</p>}
       </section>
 
