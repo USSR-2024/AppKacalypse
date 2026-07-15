@@ -10,7 +10,11 @@ export const broadcastRoutes = new Hono();
 broadcastRoutes.use("*", requireAuth);
 
 const cl = schema.changelog;
-const isPriv = (role: string) => role === "owner" || role === "admin";
+// Рассылка идёт ВСЕМ пользователям платформы, поверх границ пространств — значит
+// это инструмент оператора, а не главы компании. Только платформенный owner.
+// Раньше сюда пускало и role='admin': глава одного пространства мог написать
+// сотрудникам чужих.
+const isPriv = (role: string) => role === "owner";
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 // ── история рассылок ────────────────────────────────────────────────────────────

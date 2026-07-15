@@ -34,17 +34,21 @@ async function sweepStaleUploads() {
   }
 }
 
-// Расшифровки доступны только владельцу пространства.
-async function requireWsOwner(c: Context, next: Next) {
-  if (c.get('workspace').role !== 'owner') return c.json({ error: 'forbidden' }, 403);
+// Расшифровки доступны главе пространства. Глава — это ws-роль 'admin' (её выдаёт
+// owner-консоль при заведении пространства); 'owner' остался у исторических ws с
+// backfill'а. Проверять только 'owner' нельзя: в пространствах, заведённых консолью,
+// главы имеют 'admin' и остались бы без расшифровок.
+async function requireWsHead(c: Context, next: Next) {
+  const role = c.get('workspace').role;
+  if (role !== 'owner' && role !== 'admin') return c.json({ error: 'forbidden' }, 403);
   return next();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// /api/transcriptions — пользовательские эндпоинты (owner воркспейса)
+// /api/transcriptions — пользовательские эндпоинты (глава пространства)
 // ─────────────────────────────────────────────────────────────────────────────
 export const transcriptionRoutes = new Hono();
-transcriptionRoutes.use('*', requireAuth, requireWorkspace, requireWsOwner);
+transcriptionRoutes.use('*', requireAuth, requireWorkspace, requireWsHead);
 
 // Список расшифровок пространства (для экрана + поллинга статусов).
 transcriptionRoutes.get('/', async (c) => {

@@ -23,7 +23,10 @@ userRoutes.get('/', requireWorkspace, async (c) => {
   return c.json(rows);
 });
 
-const isPriv = (role: string) => role === 'owner' || role === 'admin';
+// Эти роуты — платформенные: список ВСЕХ юзеров всех пространств и блокировка по
+// всей платформе. Инструмент оператора, а не главы компании (у главы для своего
+// пространства есть /api/members). Раньше пускало и role='admin'.
+const isPriv = (role: string) => role === 'owner';
 
 // ── админ: список всех пользователей (вкл. заблокированных) ──────────────────────
 userRoutes.get('/admin', async (c) => {

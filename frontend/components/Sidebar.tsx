@@ -117,7 +117,7 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
             </Link>
           );
         })()}
-        {current?.role === "owner" && (() => {
+        {(current?.role === "admin" || current?.role === "owner") && (() => {
           const href = wsHref(ws, "/protocol");
           const active = path.startsWith(href);
           return (

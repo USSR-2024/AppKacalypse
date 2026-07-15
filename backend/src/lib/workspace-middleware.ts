@@ -17,8 +17,15 @@ declare module 'hono' {
 /**
  * Требует контекст воркспейса. Slug приходит в заголовке `X-Workspace` (фронт берёт
  * из пути /<slug>/...). Резолвит воркспейс, проверяет членство текущего юзера и кладёт
- * {id, slug, role} в c.get('workspace'). Платформенный owner (users.role='owner')
- * проходит в любой воркспейс (поддержка). Ставить ПОСЛЕ requireAuth.
+ * {id, slug, role} в c.get('workspace'). Ставить ПОСЛЕ requireAuth.
+ *
+ * Доступ даёт ТОЛЬКО членство. Платформенный owner (users.role='owner') сквозного
+ * прохода не имеет: пространства живут сами по себе, он их заводит и отдаёт главам.
+ * Ему по-прежнему доступна owner-консоль (создать пространство, выдать инвайт,
+ * управлять составом) — но не содержимое. Понадобился доступ к данным — добавь себя
+ * участником через консоль: это видно в списке участников, в отличие от тихого
+ * прохода мимо. Технической изоляции это не даёт (база на том же сервере), но
+ * убирает «у меня формально доступ ко всему» и случайный заход в чужие задачи.
  */
 export async function requireWorkspace(c: Context, next: Next) {
   const u = c.get('user');
@@ -38,16 +45,13 @@ export async function requireWorkspace(c: Context, next: Next) {
     .where(and(eq(schema.workspaceMembers.workspaceId, ws.id), eq(schema.workspaceMembers.userId, u.sub)))
     .limit(1);
 
-  let role = member?.role;
-  if (!member) {
-    if (u.role === 'owner') role = 'owner';        // платформенный owner — сквозной доступ
-    else return c.json({ error: 'not_a_member' }, 403);
-  } else if (member.status === 'pending') {
+  if (!member) return c.json({ error: 'not_a_member' }, 403);
+  if (member.status === 'pending') {
     // Вступил по инвайту, ещё не одобрен — доступа к данным нет.
     return c.json({ error: 'pending_approval' }, 403);
   }
 
-  c.set('workspace', { id: ws.id, slug: ws.slug, role: role! });
+  c.set('workspace', { id: ws.id, slug: ws.slug, role: member.role });
   return next();
 }
 
