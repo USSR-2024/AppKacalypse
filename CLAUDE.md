@@ -3,54 +3,118 @@
 Гайд для Claude Code и разработчика. Читать перед работой.
 
 ## Что это
-AI-диспетчер задач для личной и командной работы. Задачи ставятся обычным языком
-(PWA-приложение / встроенный чат-ассистент / Telegram-бот) → локальный Qwen разбирает
-в структуру → задача создаётся в своей БД → система напоминает о сроках.
-**Свой бэкенд + PWA на своём GPU-сервере. Без внешних LLM-API.** Единственная внешняя
-зависимость — Telegram-бот (вход + интейк + дайджесты).
+Таск-трекер с AI-ассистентом: задачи ставятся обычным языком (PWA / чат-ассистент / Telegram-бот)
+→ локальный Qwen разбирает в структуру → задача создаётся в своей БД → система напоминает о сроках.
+Вокруг наросли три подсистемы: **видеовстречи** (LiveKit, субтитры RU↔ES с переводом, запись),
+**расшифровки** встреч (WhisperX + автопротокол), **мультитенантность** (компания = воркспейс).
+**Всё на своём GPU-сервере, без внешних LLM-API.** Внешние зависимости: Telegram-бот (вход, интейк,
+дайджесты), Resend (письма с кодом входа), FCM/APNs (web push).
 
-> **Разворот (2026-06-12):** изначально строили на Vikunja+n8n — отказались (UI «не вкусный»,
-> слабый API). Пишем своё, переиспользуя AI-ядро (Gateway+Qwen), сервер, Caddy, HTTPS.
+Продуктовое ТЗ: `docs/ТЗ-app.md`. ТЗ документооборота (не начат): `docs/ТЗ-документооборот.md`.
 
-Продуктовое ТЗ: `docs/ТЗ-app.md`. Инфра/Gateway ТЗ: `docs/ТЗ-appkacalypse.md`. Статус: `docs/СТАТУС.md`.
+## ⚠️ Репозиторий ПУБЛИЧНЫЙ
+`github.com/USSR-2024/AppKacalypse` — `"private": false`. **Проверять каждый коммит на секреты.**
+Ключи только в `.env` и в конфигах на 158; в репо — `*.example` с плейсхолдерами. Под `.gitignore`:
+`services/livekit/livekit.yaml`, `services/recording/egress.yaml`, все `.env`.
 
 ## Инфраструктура и доступы
-- **Control `89.125.2.39`** (вне РФ): тут Claude Code + git. Правки → commit → push.
-  Anthropic из РФ заблокирован → Claude НЕ запускается на 158, только тут.
-- **GPU-сервер `158.255.0.82`** (RU, A4000 16GB, Ubuntu 24.04; SSH порт **19949**):
-  рантайм. `ssh -i ~/.ssh/hermes_key2 -p 19949 root@158.255.0.82`
-- **GitHub** `USSR-2024/AppKacalypse`, ветка `main`, SSH-over-443 (host-alias `github-appkacalypse`, deploy key с write).
-- **Домен:** `appkacalypse.baassist.ru` → приложение (фронт + `/api`→бэк). HTTPS Caddy+LE.
-- **Бот:** `@appKACAlypse_bot`.
+- **Control `89.125.2.39`** (вне РФ): git + Claude Code. Anthropic из РФ заблокирован → Claude
+  запускается только тут. ⚠️ Диск всего 15 ГБ — не генерировать тут большие файлы, всё тяжёлое на 158.
+  Тут же systemd-релей Telegram: `akc-tg-relay` + `akc-tg-tunnel` (см. ниже).
+- **GPU `158.255.0.82`** (RU, A4000 16 ГБ, 31 ГБ RAM, SSH порт **19949**): весь рантайм.
+  `ssh -i ~/.ssh/hermes_key2 -p 19949 root@158.255.0.82`
+- **Домены:** `appka.space` (основной, путь `/<slug>`), `meet.appka.space` (LiveKit),
+  `appkacalypse.baassist.ru` (старый, переходный). HTTPS Caddy + LE.
+- **Бот:** `@appKACAlypse_bot`. **Telegram заблокирован с 158** → бэк не звонит в API, а пишет в
+  таблицу `tg_outbox`; релей на 89 забирает и отправляет. `setWebhook` НЕ делать — сломает polling.
+- **БД приложения — база `akc`** в `appkacalypse-postgres-1` (НЕ `task_dispatcher`, там наследие).
 
 ## Стек
-- **Backend:** Node+TS+Hono+Postgres+Drizzle+Zod+JWT. `backend/`. Контейнер `akc-backend:8081`.
-- **Frontend:** Next.js 16 PWA (App Router, Tailwind v4, SWR+Zustand). `frontend/`. Контейнер `akc-frontend:3000`.
-- **LLM Gateway:** FastAPI + `qwen3:14b` (Ollama, GPU). `services/llm-gateway/`. `think:false` → ~5с.
-- **БД приложения:** отдельная база `akc` в `appkacalypse-postgres-1` (НЕ task_dispatcher — там Vikunja).
+| Что | Где |
+|---|---|
+| Backend | Node+TS+Hono+Postgres+Drizzle+Zod+JWT. `backend/`, контейнер `akc-backend:8081` |
+| Frontend | Next.js 16 PWA (App Router, Tailwind v4, SWR+Zustand). `frontend/`, `akc-frontend:3000` |
+| LLM Gateway | FastAPI + `qwen3:14b` (Ollama, GPU). `services/llm-gateway/` |
+| GPU-агент | Субтитры + расшифровка файлов на ОДНОЙ резидентной large-v3. `services/caption-agent/`, `akc-gpu-agent` |
+| Воркер протоколов | `services/transcribe-worker/` → systemd `akc-transcribe-worker` на 158 |
+| Видео | LiveKit `services/livekit/` + Egress/MinIO/Redis `services/recording/` |
 
 ## Деплой (вручную; rsync на 158 НЕТ)
-1. Код на 158: `tar czf - --exclude=node_modules --exclude=.next --exclude=dist --exclude='.env*' backend frontend services/llm-gateway | ssh ... 'tar xzf - -C /root/appkacalypse'`
-2. Пересборка: бэк/фронт — `docker compose -p akcapp -f /root/appkacalypse/docker-compose.app.yml up -d --build backend frontend`; gateway — `docker compose -p appkacalypse -f /root/appkacalypse/docker-compose.yml up -d --build llm-gateway`. **Абсолютные пути обязательны** (ssh-команды стартуют в /root, не в проекте).
-3. Бэк мигрирует БД на старте (CMD: `migrate.js && index.js`).
-4. Caddy: правка `infra/Caddyfile` → `docker restart appkacalypse-caddy-1` (reload через exec НЕ применяется).
+```bash
+# 1. Код на 158
+tar czf - --exclude=node_modules --exclude=.next --exclude=dist --exclude='.env*' \
+  backend frontend | ssh -i ~/.ssh/hermes_key2 -p 19949 root@158.255.0.82 'tar xzf - -C /root/appkacalypse'
+# 2. Пересборка (абсолютные пути обязательны — ssh стартует в /root)
+docker compose -p akcapp -f /root/appkacalypse/docker-compose.app.yml --project-directory /root/appkacalypse up -d --build backend frontend
+```
+- **Бэк мигрирует БД на старте** (CMD: `migrate.js && index.js`).
+- **GPU-агент** — свой compose (на 158 в `/root/caption-agent/`, ключи в тамошнем `.env`):
+  ```bash
+  tar czf - -C services caption-agent | ssh ... 'tar xzf - -C /root'   # .env на 158 не трогается
+  cd /root/caption-agent && docker compose -p akcgpu -f docker-compose.caption.yml --env-file .env up -d --build
+  ```
+  `agent.py` едет **в образе**, не томом → при правке **пересобирать**. Кэш моделей — хостовый том
+  `/root/transcribe/models` (пересоздание контейнера НЕ тянет 5 ГБ весов заново).
+- **worker.sh / md2pdf.py** общим таром НЕ едут → `scp` отдельно в `/root/transcribe/`, затем
+  `systemctl restart akc-transcribe-worker`.
+- **Caddy:** правка `infra/Caddyfile` → `docker restart appkacalypse-caddy-1` (reload через exec НЕ применяется).
 
 ## Архитектурные правила
-1. **LLM только извлекает JSON.** Создание/изменение делает бэкенд после валидации.
-2. **LLM не имеет доступа** к серверу, БД, секретам.
-3. **Секреты только в `.env`** (gitignored). `backend/.env`, `frontend/.env.local` — на 158, не в git.
-4. **`users.id` = внутренний UUID**, способы входа в `auth_identities` (отвязаны от id).
-5. Только Drizzle ORM, Zod-валидация, JWT на защищённых эндпоинтах. Без лишних комментариев/абстракций.
-6. **Прод-безопасность:** `ALLOW_DEV_AUTH=0`, `NEXT_PUBLIC_ALLOW_DEV=0` (dev-вход только локально).
+1. **LLM только извлекает JSON.** Создание/изменение делает бэкенд после валидации. LLM не имеет
+   доступа к серверу, БД, секретам.
+2. **Только Drizzle ORM**, Zod-валидация, JWT на защищённых эндпоинтах. Без лишних комментариев и абстракций.
+3. **`users.id` = внутренний UUID**, способы входа в `auth_identities` (telegram | email) — отвязаны от id.
+4. **Пространства изолированы.** Доступ даёт ТОЛЬКО членство: платформенный owner сквозного прохода
+   НЕ имеет. Ему доступна owner-консоль (завести пространство, выдать инвайт, управлять составом), но
+   не содержимое. Нужен доступ к данным — добавить себя участником (видно в списке участников).
+5. **Роли — три независимых слоя:** платформа `users.role` (owner = оператор: рассылка, owner-консоль,
+   платформенный список юзеров) · воркспейс `workspace_members.role` (admin = «глава компании»,
+   member) · проект `project_members` (lead/member + access_scope own|all).
+6. **Регистрация — только по приглашению.** Инвайт владельца главе: одноразовый + сразу active.
+   Инвайт главы своим: многоразовый → pending → одобрение.
+7. **Приоритет GPU живёт в бэкенде**, не в скриптах воркеров: `/api/transcribe-worker/claim?kind=`
+   не отдаёт задач, пока идёт встреча с `captions=true`. Субтитры > расшифровка > qwen.
+8. **Пустой транскрипт — не успех.** Иначе qwen получает пустоту и сочиняет встречу целиком
+   (выдуманные участники и решения, неотличимые от настоящего протокола). Проверка в бэкенде + в worker.sh.
+9. **Прод-безопасность:** `ALLOW_DEV_AUTH=0`, `NEXT_PUBLIC_ALLOW_DEV=0` (dev-вход только локально).
 
-## Готово (S2–S5, всё задеплоено)
-CRUD задач/проектов/юзеров · Telegram-авторизация · PWA (Сегодня/Входящие/Проекты+канбан/Календарь/Профиль/Выполненные/правка задачи) · AI-ассистент в приложении (создание + Q&A) · Telegram-бот (интейк + доспрос + Q&A) · напоминания утро/вечер в Telegram.
+## ★ Грабли (стоили времени, не наступать снова)
+- **Миграции пишутся ВРУЧНУЮ** (`db:generate` интерактивный, в пайпе виснет): SQL + запись в
+  `meta/_journal.json` + снапшот. **Без записи в journal drizzle миграцию не применит.** После правки
+  журнала — **пересборка образа**, не `docker restart`: `drizzle/` копируется в образ на сборке.
+- **Hono матчит роуты по порядку регистрации**, а не «статик важнее параметра». `/me` регистрировать
+  ДО `/:id`, иначе уйдёт в параметрический.
+- **`docker exec -i` читает stdin** — в `ssh 'bash -s' <<'EOF'` он съедает остаток скрипта.
+  Убирать `-i` или добавлять `</dev/null`.
+- **Порядок моделей в `agent.py` критичен**: `whisperx.load_model()` создаётся строго ДО silero и NLLB.
+  Внутри его VAD от pyannote есть RNN; перенос на GPU после других torch-моделей падает с
+  `CUDNN_STATUS_VERSION_MISMATCH` (ctranslate2 и torch тянут разные сборки cuDNN). Комментарий стоит в коде.
+- **`tsc --noEmit` проверяет ВСЁ рабочее дерево**, а не стейдж — при разложении хвоста по коммитам
+  временно убирать файлы будущих коммитов, иначе typecheck ложно красный.
+- **Загрузка больших файлов — только потоком.** `parseBody()` складывал весь multipart в RAM: видео
+  2.6 ГБ → ~5 ГБ пика при потолке кучи 4 ГБ → 500 через 4 минуты. Сейчас `PUT` с сырым телом → пайп в файл.
+- **Object Lock в MinIO включается только при создании бакета**, задним числом нельзя.
+- Бот может писать юзеру только после того, как тот сделал `/start` (ограничение Telegram).
+
+## Готово (в проде)
+Задачи/проекты/разделы/команды/комментарии/@упоминания · календарь · канбан · темы light/dark ·
+десктоп-сайдбар · дашборд KPI · web push · AI-ассистент (создание + Q&A) · Telegram-бот (интейк,
+доспрос, Q&A, управление участниками) · дайджесты · мультитенант с изоляцией · инвайты + одобрение ·
+**вход по почте (OTP, регистрация по приглашению)** · видеовстречи (инвайты, живые субтитры RU↔ES,
+запись → MinIO) · расшифровки (WhisperX + диаризация + автопротокол + PDF).
 
 ## Бэклог
-Ассистент внутри проекта (контекстный Q&A) · push-канал (VAPID готов, нужен SW+подписка) · email-канал · календарь-сетка · свайпы · иконка · уборка Vikunja/n8n/AppFlowy из стека.
+- Канал `email` в уведомлениях (дайджесты/упоминания) + дедуп. Вход по почте уже есть, канала нет.
+- Обучалка при первом входе (всплывающие подсказки).
+- **qwen**: протоколы «то удачные, то нет». Первая гипотеза — `protocol.py` режет транскрипт по 9000
+  символов при `num_ctx=32768` (это ~70-100к символов для русского), склейка кусков и даёт разброс.
+  Мерить на реальных транскриптах в `/root/transcribe/data/`, не гадать. Возможна модель под ~7 ГБ
+  (столько остаётся при резидентных субтитрах); qwen3:14b рядом с ними не помещается и уходит на CPU.
+- Голосовой перевод «как Timekettle» (TTS в caption-agent) — согласован, отложен.
+- Модуль документооборота — `docs/ТЗ-документооборот.md`, оценка ~3-4 месяца, не начат.
+- caption-agent: старый контейнер `caption-test` остановлен, снести после проверки субтитров на встрече.
 
 ## Рабочий процесс
 - Ветка `main`. Коммиты атомарные, по-русски, без секретов.
 - Перед коммитом: `npm run typecheck` (backend), `npm run build` (frontend).
 - Общение с владельцем: по-русски, коротко.
-- Бот может писать юзеру только после того, как тот сделал `/start` (ограничение Telegram).
