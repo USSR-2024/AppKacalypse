@@ -7,6 +7,7 @@ import { db, schema } from '../db/index.js';
 import { requireAuth } from '../lib/auth-middleware.js';
 import { requireWorkspace } from '../lib/workspace-middleware.js';
 import { notifyAdminGranted } from '../lib/notify.js';
+import { env } from '../lib/env.js';
 
 const ws = schema.workspaces;
 const wm = schema.workspaceMembers;
@@ -14,7 +15,7 @@ const wi = schema.workspaceInvites;
 
 // Зарезервированные слаги (конфликтуют с путями приложения).
 // 'join' — публичные инвайт-ссылки на встречи (/join/<token>), верхний уровень.
-const RESERVED = new Set(['api', 'owner', 'auth', 'login', 'app', 'admin', 'static', '_next', 'health', 'sw.js', 'join']);
+const RESERVED = new Set(['api', 'owner', 'auth', 'login', 'app', 'admin', 'static', '_next', 'health', 'sw.js', 'join', 'invite']);
 const slugSchema = z.string().regex(/^[a-z0-9-]{2,32}$/, 'slug: 2-32 символа a-z0-9-');
 
 /** Платформенный owner (users.role='owner'). */
@@ -103,6 +104,32 @@ ownerRoutes.patch('/workspaces/:id', async (c) => {
 });
 
 // Участники пространства.
+/**
+ * POST /api/owner/workspaces/:id/invite — приглашение ГЛАВЕ пространства.
+ * Одноразовое и сразу active: одобрять некому, приглашает владелец платформы.
+ *
+ * Зачем отдельно от POST /members: тот требует UUID уже существующего юзера, то
+ * есть человек должен сначала где-то зарегистрироваться сам. По ссылке он заводит
+ * аккаунт почтой прямо на входе. Одноразовость — чтобы утёкшая ссылка не сделала
+ * главой компании случайного человека.
+ */
+ownerRoutes.post('/workspaces/:id/invite', async (c) => {
+  const u = c.get('user');
+  const wsId = c.req.param('id')!;
+  const [exists] = await db.select({ id: ws.id }).from(ws).where(eq(ws.id, wsId)).limit(1);
+  if (!exists) return c.json({ error: 'not_found' }, 404);
+
+  const p = z.object({ role: z.enum(['admin', 'member']).optional() }).safeParse(await c.req.json().catch(() => ({})));
+  const role = p.success ? (p.data.role ?? 'admin') : 'admin';
+  const code = randomBytes(9).toString('base64url');
+  const expiresAt = new Date(Date.now() + 14 * 86400000);
+  await db.insert(wi).values({
+    workspaceId: wsId, code, role, createdBy: u.sub, expiresAt,
+    autoApprove: true, usesLeft: 1,
+  });
+  return c.json({ code, expiresAt, url: `${env.PUBLIC_APP_URL}/invite/${code}` }, 201);
+});
+
 ownerRoutes.get('/workspaces/:id/members', async (c) => {
   const rows = await db
     .select({ userId: wm.userId, role: wm.role, displayName: schema.users.displayName, avatarUrl: schema.users.avatarUrl })

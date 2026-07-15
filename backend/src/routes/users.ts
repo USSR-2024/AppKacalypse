@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { db, schema } from '../db/index.js';
 import { requireAuth } from '../lib/auth-middleware.js';
 import { requireWorkspace } from '../lib/workspace-middleware.js';
+import { sendLoginCode } from '../lib/mail.js';
+import { CODE_TTL_MIN, normEmail, tooManyCodes, issueCode, consumeCode } from '../lib/email-auth.js';
 
 export const userRoutes = new Hono();
 userRoutes.use('*', requireAuth);
@@ -51,6 +53,52 @@ const updateMeSchema = z.object({
   morningTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
   eveningTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
   notifyChannels: z.array(z.enum(['telegram', 'push', 'email'])).optional(),
+});
+
+// ── Привязка почты к своему аккаунту (тот же код на почту) ────────────────────
+// Даёт второй способ входа тем, кто пришёл через Telegram. Адрес подтверждаем
+// кодом: иначе можно вписать чужую почту и войти потом под этим аккаунтом с неё.
+// ВАЖНО: статические роуты — ДО '/:id', иначе Hono отдаст их в параметрический
+// (матчит по порядку регистрации, а не «статик важнее»).
+
+userRoutes.post('/me/email/request', async (c) => {
+  const me = c.get('user');
+  const p = z.object({ email: z.string().trim().toLowerCase().email().max(200) })
+    .safeParse(await c.req.json().catch(() => null));
+  if (!p.success) return c.json({ error: 'bad_request' }, 400);
+  const email = normEmail(p.data.email);
+
+  const [taken] = await db.select({ userId: schema.authIdentities.userId })
+    .from(schema.authIdentities)
+    .where(and(eq(schema.authIdentities.provider, 'email'), eq(schema.authIdentities.externalId, email)))
+    .limit(1);
+  if (taken && taken.userId !== me.sub) return c.json({ error: 'email_taken' }, 409);
+  if (await tooManyCodes(email)) return c.json({ error: 'too_many' }, 429);
+
+  const code = await issueCode(email, { linkUserId: me.sub });
+  await sendLoginCode(email, code, CODE_TTL_MIN);
+  return c.json({ ok: true, ttlMinutes: CODE_TTL_MIN });
+});
+
+userRoutes.post('/me/email/verify', async (c) => {
+  const me = c.get('user');
+  const p = z.object({
+    email: z.string().trim().toLowerCase().email().max(200),
+    code: z.string().trim().min(4).max(10),
+  }).safeParse(await c.req.json().catch(() => null));
+  if (!p.success) return c.json({ error: 'bad_request' }, 400);
+  const email = normEmail(p.data.email);
+
+  const res = await consumeCode(email, p.data.code);
+  if (!res.ok) return c.json({ error: res.reason }, res.reason === 'expired' ? 410 : 401);
+  // Код, выписанный для входа, не должен привязывать почту к чужому аккаунту.
+  if (res.row.linkUserId !== me.sub) return c.json({ error: 'invalid' }, 401);
+
+  await db.insert(schema.authIdentities)
+    .values({ userId: me.sub, provider: 'email', externalId: email, meta: {} })
+    .onConflictDoNothing();
+  await db.update(u).set({ email, updatedAt: new Date() }).where(eq(u.id, me.sub));
+  return c.json({ ok: true, email });
 });
 
 userRoutes.patch('/me', async (c) => {

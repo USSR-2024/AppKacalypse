@@ -1,11 +1,16 @@
 import { Hono } from 'hono';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { randomBytes } from 'node:crypto';
 import { db, schema } from '../db/index.js';
 import { signSession } from '../lib/jwt.js';
 import { verifyTelegramLogin } from '../lib/telegram.js';
 import { findOrCreateUser } from '../lib/users.js';
+import { sendLoginCode, sendNoAccess } from '../lib/mail.js';
+import {
+  CODE_TTL_MIN, normEmail, nameFromEmail, tooManyCodes, issueCode, consumeCode,
+  findInvite, acceptInvite,
+} from '../lib/email-auth.js';
 import { env } from '../lib/env.js';
 
 export const authRoutes = new Hono();
@@ -52,6 +57,86 @@ authRoutes.post('/dev', async (c) => {
   const user = await findOrCreateUser('telegram', externalId, displayName);
   const token = await signSession({ sub: user.id, role: user.role });
   return c.json({ token, dev: true });
+});
+
+// ── Вход по почте (беспарольный, код из письма) ───────────────────────────────
+// Регистрация ТОЛЬКО по приглашению: аккаунт заводится, если есть живой инвайт.
+// Существующий адрес → обычный вход.
+//
+// Форма отвечает одинаково всегда — {ok:true}, есть аккаунт или нет. Иначе по
+// ответу API перебором вычисляется, кто зарегистрирован. Адресу без аккаунта и
+// без приглашения уходит письмо-объяснение: человек понимает, что произошло, а
+// посторонний не узнаёт ничего, потому что письмо приходит не ему.
+
+const emailSchema = z.string().trim().toLowerCase().email().max(200);
+
+/** POST /api/auth/email/request — прислать код на почту. */
+authRoutes.post('/email/request', async (c) => {
+  const p = z.object({
+    email: emailSchema,
+    invite: z.string().min(1).max(128).optional(),
+  }).safeParse(await c.req.json().catch(() => null));
+  if (!p.success) return c.json({ error: 'bad_request' }, 400);
+
+  const email = normEmail(p.data.email);
+  const ok = { ok: true, ttlMinutes: CODE_TTL_MIN };
+  if (await tooManyCodes(email)) return c.json(ok);   // молча: не подсказываем, что адрес живой
+
+  const [identity] = await db
+    .select({ userId: schema.authIdentities.userId })
+    .from(schema.authIdentities)
+    .where(and(eq(schema.authIdentities.provider, 'email'), eq(schema.authIdentities.externalId, email)))
+    .limit(1);
+
+  const invite = p.data.invite ? await findInvite(p.data.invite) : null;
+
+  if (!identity && !invite) {
+    await sendNoAccess(email);
+    return c.json(ok);
+  }
+
+  const code = await issueCode(email, { inviteCode: invite ? p.data.invite : undefined });
+  await sendLoginCode(email, code, CODE_TTL_MIN);
+  return c.json(ok);
+});
+
+/** POST /api/auth/email/verify — обменять код на сессию. */
+authRoutes.post('/email/verify', async (c) => {
+  const p = z.object({
+    email: emailSchema,
+    code: z.string().trim().min(4).max(10),
+  }).safeParse(await c.req.json().catch(() => null));
+  if (!p.success) return c.json({ error: 'bad_request' }, 400);
+
+  const email = normEmail(p.data.email);
+  const res = await consumeCode(email, p.data.code);
+  if (!res.ok) return c.json({ error: res.reason }, res.reason === 'expired' ? 410 : 401);
+
+  // Приглашение перепроверяем в момент обмена: пока шло письмо, оно могло
+  // истечь или быть исчерпанным одноразовым.
+  const invite = res.row.inviteCode ? await findInvite(res.row.inviteCode) : null;
+
+  const [identity] = await db
+    .select({ userId: schema.authIdentities.userId })
+    .from(schema.authIdentities)
+    .where(and(eq(schema.authIdentities.provider, 'email'), eq(schema.authIdentities.externalId, email)))
+    .limit(1);
+
+  if (!identity && !invite) return c.json({ error: 'no_access' }, 403);
+
+  const user = await findOrCreateUser('email', email, nameFromEmail(email));
+  if (!identity) await db.update(schema.users).set({ email }).where(eq(schema.users.id, user.id));
+  if (invite) await acceptInvite(user.id, res.row.inviteCode!, invite);
+
+  const token = await signSession({ sub: user.id, role: user.role });
+  return c.json({ token, workspace: invite ? { slug: invite.wsSlug, pending: !invite.autoApprove } : undefined });
+});
+
+/** GET /api/auth/invite/:code — что это за приглашение (для экрана /invite/<code>). */
+authRoutes.get('/invite/:code', async (c) => {
+  const inv = await findInvite(c.req.param('code')!);
+  if (!inv) return c.json({ error: 'invalid' }, 404);
+  return c.json({ workspaceName: inv.wsName, role: inv.role });
 });
 
 // ── Вход через бота (обход блокировки веб-виджета в РФ) ────────────────────────

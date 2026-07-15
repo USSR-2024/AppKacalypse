@@ -7,6 +7,7 @@ import { useWs } from "@/lib/ws";
 import { useAuth } from "@/lib/store";
 import { enablePush, disablePush, pushSupported } from "@/lib/push";
 import { Avatar } from "@/components/Avatar";
+import { EmailLink } from "@/components/EmailLink";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import type { Me } from "@/lib/types";
 
@@ -108,6 +109,11 @@ export default function ProfilePage() {
           />
         </div>
         <p className="mt-1 px-1 text-xs text-muted">Так вас видят в задачах и при назначении.</p>
+      </section>
+
+      <section className="mb-5">
+        <h2 className="mb-2 px-1 text-xs uppercase tracking-wide text-muted">Почта</h2>
+        <EmailLink email={draft.email} onLinked={() => mutate("/me")} />
       </section>
 
       <section className="mb-5">

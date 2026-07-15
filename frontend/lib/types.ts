@@ -150,6 +150,7 @@ export interface Me {
   id: string;
   displayName: string;
   avatarUrl: string | null;
+  email: string | null;      // привязана ли почта (второй способ входа)
   role: string;
   timezone: string;
   lang: string;

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/store";
 import { TelegramLogin } from "@/components/TelegramLogin";
+import { EmailLogin } from "@/components/EmailLogin";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -123,6 +124,14 @@ export default function LoginPage() {
             >
               Войти через Telegram-бота
             </button>
+
+            <div className="flex w-full items-center gap-3 py-1">
+              <div className="h-px flex-1 bg-border" />
+              <span className="text-xs text-muted">или по почте</span>
+              <div className="h-px flex-1 bg-border" />
+            </div>
+
+            <EmailLogin onToken={(t) => finish(t)} />
 
             <button
               onClick={() => setShowOther((v) => !v)}

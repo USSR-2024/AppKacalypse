@@ -54,6 +54,7 @@ app.get('/api/me', requireAuth, async (c) => {
       id: schema.users.id,
       displayName: schema.users.displayName,
       avatarUrl: schema.users.avatarUrl,
+      email: schema.users.email,        // привязана ли почта (второй способ входа)
       role: schema.users.role,
       timezone: schema.users.timezone,
       lang: schema.users.lang,

@@ -132,12 +132,37 @@ export const workspaceInvites = pgTable('workspace_invites', {
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
   code: text('code').notNull(),
   role: workspaceRole('role').notNull().default('member'),  // роль, которую получит вступивший после одобрения
+  // Одобрять некому, когда главу пространства зовёт владелец платформы → сразу active.
+  // Инвайты главы своим сотрудникам остаются pending (false).
+  autoApprove: boolean('auto_approve').notNull().default(false),
+  // null = многоразовая (ссылка главы своим). Число = сколько входов осталось;
+  // приглашение главе выдаётся одноразовым, чтобы утёкшая ссылка не сделала
+  // главой компании случайного человека.
+  usesLeft: integer('uses_left'),
   createdBy: uuid('created_by').notNull().references(() => users.id),
   expiresAt: timestamp('expires_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   codeUnique: unique('workspace_invite_code_unique').on(t.code),
   workspaceIdx: index('workspace_invites_workspace_idx').on(t.workspaceId),
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// email_login_codes — беспарольный вход по коду на почту (OTP). Тот же примитив
+// закрывает и вход, и регистрацию по инвайту, и привязку почты в профиле.
+// Код хранится ХЕШЕМ: дамп базы не должен давать возможности войти.
+// ─────────────────────────────────────────────────────────────────────────────
+export const emailLoginCodes = pgTable('email_login_codes', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  email: text('email').notNull(),                       // нормализованный (lowercase, trim)
+  codeHash: text('code_hash').notNull(),                // sha256(код)
+  inviteCode: text('invite_code'),                      // если это регистрация по приглашению
+  linkUserId: uuid('link_user_id').references(() => users.id, { onDelete: 'cascade' }), // привязка почты в профиле
+  attempts: integer('attempts').notNull().default(0),   // защита от перебора шестизначного кода
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  emailIdx: index('email_login_codes_email_idx').on(t.email),
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
