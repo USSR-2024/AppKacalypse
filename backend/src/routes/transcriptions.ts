@@ -178,24 +178,39 @@ transcribeWorkerRoutes.use('*', async (c, next) => {
   return next();
 });
 
-// Забрать следующую задачу. Сначала транскрибация, затем протоколы. SKIP LOCKED —
-// на случай нескольких воркеров. Возвращает {id, kind, lang} или 204.
+/** Идёт ли живая встреча с субтитрами. Пока идёт — карта принадлежит им:
+ *  ни расшифровка (large-v3 + диаризация), ни протокол (qwen) задач не получают.
+ *  Приоритет живёт ЗДЕСЬ, а не в скриптах воркеров — иначе правило разъедется. */
+async function captionsBusy(): Promise<boolean> {
+  const [row] = await db.select({ id: schema.meetings.id }).from(schema.meetings)
+    .where(and(eq(schema.meetings.status, 'active'), eq(schema.meetings.captions, true)))
+    .limit(1);
+  return !!row;
+}
+
+// Забрать следующую задачу нужного типа. `kind` обязателен: транскрибацию берёт
+// GPU-агент (у него резидентная large-v3), протокол — хостовый воркер (тот зовёт
+// qwen в ollama). SKIP LOCKED — на случай нескольких воркеров. Отдаёт {id, kind, lang} или 204.
 transcribeWorkerRoutes.post('/claim', async (c) => {
+  const kind = z.enum(['transcribe', 'protocol']).safeParse(c.req.query('kind'));
+  if (!kind.success) return c.json({ error: 'bad_request' }, 400);
+
+  if (await captionsBusy()) return c.body(null, 204);   // идёт встреча → GPU занят субтитрами
+
   const job = await db.transaction(async (tx) => {
-    const [t] = await tx.select({ id: tr.id, lang: tr.lang }).from(tr)
-      .where(eq(tr.status, 'queued')).orderBy(tr.createdAt).limit(1).for('update', { skipLocked: true });
-    if (t) {
+    if (kind.data === 'transcribe') {
+      const [t] = await tx.select({ id: tr.id, lang: tr.lang }).from(tr)
+        .where(eq(tr.status, 'queued')).orderBy(tr.createdAt).limit(1).for('update', { skipLocked: true });
+      if (!t) return null;
       await tx.update(tr).set({ status: 'transcribing', updatedAt: new Date() }).where(eq(tr.id, t.id));
       return { id: t.id, kind: 'transcribe' as const, lang: t.lang };
     }
     const [p] = await tx.select({ id: tr.id, lang: tr.lang }).from(tr)
       .where(and(eq(tr.status, 'transcribed'), eq(tr.protocolStatus, 'queued')))
       .orderBy(tr.updatedAt).limit(1).for('update', { skipLocked: true });
-    if (p) {
-      await tx.update(tr).set({ protocolStatus: 'running', updatedAt: new Date() }).where(eq(tr.id, p.id));
-      return { id: p.id, kind: 'protocol' as const, lang: p.lang };
-    }
-    return null;
+    if (!p) return null;
+    await tx.update(tr).set({ protocolStatus: 'running', updatedAt: new Date() }).where(eq(tr.id, p.id));
+    return { id: p.id, kind: 'protocol' as const, lang: p.lang };
   });
   if (!job) return c.body(null, 204);
   return c.json(job);
@@ -213,8 +228,16 @@ transcribeWorkerRoutes.post('/:id/result', async (c) => {
 
   const id = c.req.param('id')!;
   if (kind === 'transcribe') {
-    await db.update(tr).set({ status: ok ? 'transcribed' : 'failed', error: ok ? null : (error ?? 'ошибка'), updatedAt: new Date() })
-      .where(eq(tr.id, id));
+    // Пустой транскрипт — НЕ успех. Так бывает, когда в файле нет звуковой дорожки
+    // или она молчит. Пропустить это дальше нельзя: qwen получит пустоту и сочинит
+    // правдоподобную встречу с несуществующими участниками и решениями.
+    const empty = ok && !(await readFile(join(dir(id), 'transcript.txt'), 'utf8').catch(() => '')).trim();
+    const failed = !ok || empty;
+    await db.update(tr).set({
+      status: failed ? 'failed' : 'transcribed',
+      error: failed ? (empty ? 'речь не найдена — в файле нет звуковой дорожки или она молчит' : (error ?? 'ошибка')) : null,
+      updatedAt: new Date(),
+    }).where(eq(tr.id, id));
   } else {
     await db.update(tr).set({ protocolStatus: ok ? 'ready' : 'failed', error: ok ? null : (error ?? 'ошибка'), updatedAt: new Date() })
       .where(eq(tr.id, id));

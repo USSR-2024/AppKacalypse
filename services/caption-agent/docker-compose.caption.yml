@@ -1,0 +1,36 @@
+# GPU-агент AppKacalypse: живые субтитры + расшифровка файлов на ОДНОЙ резидентной
+# large-v3 (второй копии весов в 16 ГБ карты не держим). Живёт на 158 в /root/caption-agent.
+# Запуск: cd /root/caption-agent && docker compose -p akcgpu -f docker-compose.caption.yml --env-file .env up -d --build
+#
+# host-network: LiveKit (:7880) и бэкенд (:8081) слушают на 127.0.0.1 хоста.
+# agent.py НЕ монтируем томом — он попадает в образ при сборке. Иначе легко забыть
+# скопировать файл на сервер и гадать, почему правка не применилась.
+services:
+  gpu-agent:
+    build: .
+    image: caption-agent:local
+    container_name: akc-gpu-agent
+    restart: unless-stopped
+    network_mode: host
+    shm_size: 1gb
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      ASR_MODEL: large-v3
+      LIVEKIT_URL: ws://127.0.0.1:7880
+      BACKEND_URL: http://127.0.0.1:8081
+      DATA_DIR: /data
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      WORKER_TOKEN: ${WORKER_TOKEN}
+      HF_TOKEN: ${HF_TOKEN}          # диаризация (pyannote); без него расшифровка без спикеров
+    volumes:
+      # Кэш моделей на хосте: пересоздание контейнера больше не тянет 5 ГБ весов заново.
+      - /root/transcribe/models:/cache
+      # Тот же том, что у бэкенда: /data/<id>/audio.* → transcript.txt/.json
+      - /root/transcribe/data:/data

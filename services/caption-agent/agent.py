@@ -1,26 +1,41 @@
 """
-LiveKit caption-agent — живые субтитры с переводом RU↔ES.
-Заходит во все активные комнаты, слушает аудио участников, режет речь по VAD
-(silero), распознаёт faster-whisper'ом, переводит NLLB на противоположный язык и
-публикует ОБА варианта через LiveKit Transcription API. Клиент показывает каждому
-зрителю сегмент на его языке.
+GPU-агент AppKacalypse — ОДНА резидентная модель на две задачи.
+
+1) Живые субтитры с переводом RU↔ES: заходит в комнаты с включёнными субтитрами,
+   слушает аудио, режет речь по VAD (silero), распознаёт, переводит NLLB и
+   публикует оба языка data-сообщением (топик 'captions').
+2) Расшифровка файлов: берёт задачи из очереди бэкенда и гоняет whisperx
+   (выравнивание + диаризация) ПОВЕРХ ТОЙ ЖЕ модели.
+
+Почему в одном процессе: large-v3 нужна обеим задачам, а держать две копии одних
+весов в 16 ГБ карты — расточительство. whisperx.load_model() принимает готовый
+экземпляр (параметр model=), а whisperx.asr.WhisperModel — подкласс
+faster_whisper.WhisperModel, поэтому один объект умеет и .transcribe() для
+субтитров, и generate_segment_batched() для файлового пайплайна.
+
+Приоритет: субтитры > расшифровка. Пока идёт встреча с субтитрами, бэкенд не
+выдаёт файловых задач (гейт в /api/transcribe-worker/claim), плюс страховка здесь.
 
 ENV:
   LIVEKIT_URL   ws://127.0.0.1:7880   (агент на том же хосте, что LiveKit)
   LIVEKIT_API_KEY / LIVEKIT_API_SECRET
-  ASR_MODEL     модель faster-whisper (по умолчанию medium)
-  CAPTION_ROOM  (опц.) сразу зайти в конкретную комнату
+  ASR_MODEL     модель whisper (по умолчанию medium; на проде large-v3)
+  BACKEND_URL / WORKER_TOKEN          доступ к очереди и списку комнат
+  HF_TOKEN      для диаризации (pyannote); без него расшифровка без спикеров
+  DATA_DIR      общий том с бэкендом (/data/<id>/audio.*)
 """
 import asyncio
 import json
 import os
 import uuid
+import glob
 import numpy as np
 import requests
 import torch
 
 from livekit import rtc, api
-from faster_whisper import WhisperModel
+import whisperx
+from whisperx.asr import WhisperModel   # подкласс faster_whisper: умеет и то, и другое
 from silero_vad import load_silero_vad, VADIterator
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
@@ -30,11 +45,25 @@ API_SECRET = os.environ["LIVEKIT_API_SECRET"]
 ASR_MODEL = os.environ.get("ASR_MODEL", "medium")
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://127.0.0.1:8081")
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "")
+HF_TOKEN = os.environ.get("HF_TOKEN") or None
+DATA_DIR = os.environ.get("DATA_DIR", "/data")
 SR = 16000
 NLLB = {"ru": "rus_Cyrl", "es": "spa_Latn"}
 
-print(f"[agent] faster-whisper '{ASR_MODEL}' на GPU…", flush=True)
+print(f"[agent] whisper '{ASR_MODEL}' на GPU (резидентно, общая для субтитров и файлов)…", flush=True)
 asr = WhisperModel(ASR_MODEL, device="cuda", compute_type="float16")
+
+# Файловый пайплайн поверх ТОЙ ЖЕ модели (model=asr) — второй копии весов в VRAM нет.
+#
+# ★ ПОРЯДОК ВАЖЕН: строго здесь, до silero и NLLB. Внутри whisperx свой VAD от
+# pyannote, а в нём RNN: перенос на GPU дёргает torch._cudnn_rnn_flatten_weight.
+# Если к этому моменту в процессе уже подняты другие torch-модели, ядра cuDNN для
+# RNN падают с CUDNN_STATUS_VERSION_MISMATCH (ctranslate2 и torch тянут разные
+# сборки cuDNN). Создать пайплайн сразу после ASR — и дальше он живёт резидентно.
+# Язык задаётся не тут, а на каждый вызов transcribe(language=...).
+print("[agent] файловый пайплайн whisperx (та же модель)…", flush=True)
+file_pipe = whisperx.load_model(ASR_MODEL, "cuda", compute_type="float16", model=asr)
+
 print("[agent] silero-vad…", flush=True)
 vad_model = load_silero_vad()
 print("[agent] NLLB-200 (перевод)…", flush=True)
@@ -196,6 +225,142 @@ async def join_room(room_name: str, active: dict):
     print(f"[agent] вошёл в '{room_name}' (участников: {len(room.remote_participants)})", flush=True)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Расшифровка файлов — та же модель, что и у субтитров, второй копии в VRAM нет.
+# ─────────────────────────────────────────────────────────────────────────────
+WORKER_API = f"{BACKEND_URL}/api/transcribe-worker"
+_hdr = {"X-Worker-Token": WORKER_TOKEN}
+
+
+def claim_file_job():
+    """→ {id, kind, lang} или None. Бэкенд не отдаёт задач, пока идёт встреча с субтитрами."""
+    r = requests.post(f"{WORKER_API}/claim", params={"kind": "transcribe"}, headers=_hdr, timeout=20)
+    if r.status_code == 204:
+        return None
+    r.raise_for_status()
+    return r.json()
+
+
+def report_file_job(job_id: str, ok: bool, error: str = ""):
+    body = {"kind": "transcribe", "ok": ok}
+    if error:
+        body["error"] = error[:2000]
+    requests.post(f"{WORKER_API}/{job_id}/result", json=body, headers=_hdr, timeout=20)
+
+
+def _ts(sec):
+    if sec is None:
+        return "--:--"
+    sec = int(sec)
+    return f"{sec // 60:02d}:{sec % 60:02d}"
+
+
+def _render(segments) -> str:
+    """[мм:сс] SPEAKER_x: текст — подряд идущие реплики одного спикера склеиваем."""
+    lines, cur_spk, cur_start, buf = [], None, None, []
+
+    def flush():
+        if buf:
+            lines.append(f"[{_ts(cur_start)}] {cur_spk or 'SPEAKER'}: {' '.join(buf).strip()}")
+
+    for seg in segments:
+        text = (seg.get("text") or "").strip()
+        if not text:
+            continue
+        spk = seg.get("speaker", "SPEAKER_?")
+        if spk != cur_spk:
+            flush()
+            cur_spk, cur_start, buf = spk, seg.get("start"), [text]
+        else:
+            buf.append(text)
+    flush()
+    return "\n".join(lines)
+
+
+def run_file_job(job) -> int:
+    """Полный пайплайн файла: ASR → выравнивание → диаризация → transcript.txt/.json.
+    Возвращает число реплик. Синхронный, зовётся из executor'а."""
+    jid = job["id"]
+    lang = job.get("lang") or "auto"
+    d = os.path.join(DATA_DIR, jid)
+    found = glob.glob(os.path.join(d, "audio.*"))
+    if not found:
+        raise RuntimeError("аудиофайл не найден")
+    audio_file = found[0]
+
+    lang_code = None if lang == "auto" else lang
+
+    print(f"[file] {jid}: читаю {os.path.basename(audio_file)}", flush=True)
+    audio = whisperx.load_audio(audio_file)
+    # file_pipe — резидентный, поднят при старте (см. комментарий там о порядке).
+    result = file_pipe.transcribe(audio, batch_size=16, language=lang_code)
+    detected = result.get("language")
+    print(f"[file] {jid}: язык={detected}, сегментов={len(result.get('segments') or [])}", flush=True)
+
+    try:
+        model_a, meta = whisperx.load_align_model(language_code=detected, device="cuda")
+        result = whisperx.align(result["segments"], model_a, meta, audio, "cuda", return_char_alignments=False)
+        del model_a
+        torch.cuda.empty_cache()   # выравнивание больше не нужно — отдаём память
+    except Exception as e:
+        print(f"[file] {jid}: выравнивание пропущено: {e}", flush=True)
+
+    if HF_TOKEN:
+        try:
+            try:
+                from whisperx import DiarizationPipeline
+            except ImportError:
+                from whisperx.diarize import DiarizationPipeline
+            diar = DiarizationPipeline(use_auth_token=HF_TOKEN, device="cuda")
+            result = whisperx.assign_word_speakers(diar(audio), result)
+            del diar
+            torch.cuda.empty_cache()
+        except Exception as e:
+            print(f"[file] {jid}: диаризация не удалась: {e}", flush=True)
+
+    segments = result["segments"]
+    with open(os.path.join(d, "transcript.json"), "w", encoding="utf-8") as f:
+        json.dump({"language": detected, "segments": segments}, f, ensure_ascii=False, indent=1)
+    text = _render(segments)
+    with open(os.path.join(d, "transcript.txt"), "w", encoding="utf-8") as f:
+        f.write(text)
+
+    replicas = len(text.splitlines()) if text else 0
+    print(f"[file] {jid}: готово, реплик: {replicas}", flush=True)
+    return replicas
+
+
+async def file_worker(active: dict, poll: int = 10):
+    """Берёт задачи расшифровки, только когда нет живых субтитров.
+    Начатый файл не прерываем: whisperx считает файл одним вызовом."""
+    loop = asyncio.get_event_loop()
+    while True:
+        if active:                       # идёт встреча — карта принадлежит субтитрам
+            await asyncio.sleep(poll)
+            continue
+        try:
+            job = await loop.run_in_executor(None, claim_file_job)
+        except Exception as e:
+            print(f"[file] очередь недоступна: {e}", flush=True)
+            await asyncio.sleep(poll)
+            continue
+        if not job:
+            await asyncio.sleep(poll)
+            continue
+        print(f"[file] взял задачу {job['id']} (lang={job.get('lang')})", flush=True)
+        try:
+            await loop.run_in_executor(None, run_file_job, job)
+            await loop.run_in_executor(None, report_file_job, job["id"], True, "")
+        except Exception as e:
+            print(f"[file] ошибка {job['id']}: {e}", flush=True)
+            try:
+                await loop.run_in_executor(None, report_file_job, job["id"], False, str(e))
+            except Exception:
+                pass
+        finally:
+            torch.cuda.empty_cache()
+
+
 def fetch_caption_rooms() -> set:
     """Комнаты с включёнными субтитрами (бэкенд, гейт по WORKER_TOKEN)."""
     r = requests.get(
@@ -209,7 +374,8 @@ def fetch_caption_rooms() -> set:
 async def main():
     active: dict = {}
     loop = asyncio.get_event_loop()
-    asyncio.create_task(seg_worker())  # серийный обработчик сегментов
+    asyncio.create_task(seg_worker())          # серийный обработчик сегментов субтитров
+    asyncio.create_task(file_worker(active))   # расшифровка файлов в паузах между встречами
 
     # Прогрев CUDA-ядер, чтобы ПЕРВОЕ реальное распознавание/перевод не тормозили.
     try:
