@@ -116,6 +116,16 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
             </Link>
           );
         })()}
+        {current?.role === "owner" && (() => {
+          const href = wsHref(ws, "/protocol");
+          const active = path.startsWith(href);
+          return (
+            <Link href={href} className={`mb-0.5 flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${active ? "bg-surface-2 font-medium text-accent shadow-[var(--shadow)]" : "text-muted hover:bg-surface-2 hover:text-text"}`}>
+              <span className="text-base">🎙</span>
+              Расшифровки
+            </Link>
+          );
+        })()}
       </nav>
 
       {/* Низ: тема + профиль */}

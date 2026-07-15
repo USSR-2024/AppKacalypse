@@ -117,6 +117,19 @@ export interface AdminUser {
   createdAt: string;
 }
 
+export type TranscriptionStatus = "queued" | "transcribing" | "transcribed" | "failed";
+export type ProtocolStatus = "none" | "queued" | "running" | "ready" | "failed";
+
+export interface Transcription {
+  id: string;
+  filename: string;
+  lang: "auto" | "ru" | "es";
+  status: TranscriptionStatus;
+  protocolStatus: ProtocolStatus;
+  error: string | null;
+  createdAt: string;
+}
+
 export interface Me {
   id: string;
   displayName: string;

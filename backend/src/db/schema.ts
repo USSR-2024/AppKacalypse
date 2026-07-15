@@ -358,6 +358,32 @@ export const broadcasts = pgTable('broadcasts', {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// transcriptions — расшифровки встреч (Zoom m4a → текст + протокол). Пайплайн
+// гоняет хостовый воркер akc-transcribe-worker (GPU, whisperx + qwen3), бэкенд
+// только принимает файл, отдаёт статус/результат. Файлы — на общем томе /data/<id>/.
+//   status:         queued → transcribing → transcribed | failed
+//   protocolStatus: none → queued → running → ready | failed  (по запросу пользователя)
+// ─────────────────────────────────────────────────────────────────────────────
+export const transcriptionStatus = pgEnum('transcription_status', ['queued', 'transcribing', 'transcribed', 'failed']);
+export const protocolStatus = pgEnum('protocol_status', ['none', 'queued', 'running', 'ready', 'failed']);
+
+export const transcriptions = pgTable('transcriptions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  filename: text('filename').notNull(),                 // исходное имя файла (для показа)
+  lang: text('lang').notNull().default('auto'),         // auto | ru | es
+  status: transcriptionStatus('status').notNull().default('queued'),
+  protocolStatus: protocolStatus('protocol_status').notNull().default('none'),
+  error: text('error'),                                 // текст ошибки последнего упавшего этапа
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  workspaceIdx: index('transcriptions_workspace_idx').on(t.workspaceId),
+  statusIdx: index('transcriptions_status_idx').on(t.status),
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
 // push_subscriptions — Web Push (PWA). Один user → много устройств.
 // ─────────────────────────────────────────────────────────────────────────────
 export const pushSubscriptions = pgTable('push_subscriptions', {

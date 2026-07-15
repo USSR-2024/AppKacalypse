@@ -13,6 +13,10 @@ services:
     # Только loopback 158 — для SSH-туннеля релея (89→158). Наружу НЕ публикуется.
     ports:
       - "127.0.0.1:8081:8081"
+    # Общий том с хостовым воркером расшифровок: бэк принимает аудио и отдаёт
+    # результаты, воркер (на хосте) читает аудио и пишет transcript.txt/protocol.md.
+    volumes:
+      - /root/transcribe/data:/data
     networks: [default]
 
   frontend:

@@ -1,0 +1,14 @@
+[Unit]
+Description=AppKacalypse transcribe worker (whisperx + qwen3)
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/root/transcribe/worker.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
