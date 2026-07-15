@@ -1,0 +1,48 @@
+# LiveKit server — self-hosted SFU для созвонов внутри трекера.
+# Работает в host-network на 158; сигналинг 7880 (Caddy проксирует wss с meet.appka.space),
+# медиа по UDP 50000-50200 + TCP-fallback 7881, встроенный TURN.
+#
+# ШАБЛОН. Реальный конфиг — только на 158 в /root/livekit/livekit.yaml (под .gitignore).
+# Развернуть: cp livekit.yaml.example livekit.yaml && подставить ключи.
+# Ключи должны совпадать с LIVEKIT_API_KEY/LIVEKIT_API_SECRET в backend/.env и с egress.yaml.
+# Сгенерировать пару: key = "API" + openssl rand -hex 8, secret = openssl rand -base64 36
+port: 7880
+bind_addresses:
+  - ""
+
+rtc:
+  # UDP-медиа (осн. путь, низкая задержка) + TCP-fallback 7881 для строгих NAT.
+  # Провайдер (HOSTKEY) UDP НЕ блокирует (проверено round-trip: исходящий Cloudflare
+  # STUN 3478 + входящий 89→158:50007). Прежний "блок" был ложным: LiveKit default
+  # бьётся в Google STUN 19302, недоступный отсюда → "could not validate external IP".
+  # Публичный IP прямо на ens1 (не NAT) → node_ip статикой, STUN не нужен, external_ip off.
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50200
+  use_external_ip: false
+  node_ip: <IP сервера>
+
+# Ключи API (key: secret).
+keys:
+  <LIVEKIT_API_KEY>: <LIVEKIT_API_SECRET>
+
+# Redis — шина между LiveKit-сервером и Egress (без него запись невозможна).
+redis:
+  address: 127.0.0.1:6379
+
+# Вебхуки: LiveKit шлёт события (egress_ended и др.) на бэкенд. Подписаны api_key/secret,
+# бэк проверяет через WebhookReceiver. Бэкенд слушает на 127.0.0.1:8081 (host-net LiveKit достаёт).
+webhook:
+  api_key: <LIVEKIT_API_KEY>
+  urls:
+    - http://127.0.0.1:8081/api/livekit/webhook
+
+# Встроенный TURN — на случай участников за строгим NAT.
+# TLS-TURN (5349) добавим позже при необходимости; пока UDP 3478.
+turn:
+  enabled: true
+  domain: meet.appka.space
+  udp_port: 3478
+
+logging:
+  level: info

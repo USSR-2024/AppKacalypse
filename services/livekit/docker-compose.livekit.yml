@@ -1,0 +1,11 @@
+# LiveKit SFU — отдельный compose, изолирован от прод-стека akcapp.
+# host-network нужен для WebRTC (диапазон UDP-портов без per-port publish).
+services:
+  livekit:
+    image: livekit/livekit-server:v1.13
+    container_name: livekit
+    command: --config /etc/livekit.yaml
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro

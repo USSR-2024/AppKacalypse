@@ -17,6 +17,7 @@ const NAV = [
   { href: "/assistant", label: "Ассистент", icon: "🤖" },
   { href: "/projects", label: "Проекты", icon: "📁" },
   { href: "/calendar", label: "Календарь", icon: "🗓" },
+  { href: "/meet", label: "Встречи", icon: "📹" },
   { href: "/team", label: "Команда", icon: "👥" },
 ];
 

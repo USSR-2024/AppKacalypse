@@ -10,6 +10,15 @@ services:
     env_file: ./backend/.env
     environment:
       ALLOW_DEV_AUTH: "0"   # прод: dev-вход выключен жёстко
+      # LiveKit HTTP API (egress) на хосте (host-net); из контейнера — через host-gateway.
+      LIVEKIT_HTTP_URL: "http://host.docker.internal:7880"
+      # MinIO: бэк в одной сети → по имени контейнера. Egress (host-net) — через loopback.
+      S3_ENDPOINT: "http://akc-minio:9000"
+      S3_EGRESS_ENDPOINT: "http://127.0.0.1:9000"
+      S3_BUCKET: "recordings"
+    # host.docker.internal → хост (там LiveKit на 7880).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # Только loopback 158 — для SSH-туннеля релея (89→158). Наружу НЕ публикуется.
     ports:
       - "127.0.0.1:8081:8081"

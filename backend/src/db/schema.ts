@@ -384,6 +384,36 @@ export const transcriptions = pgTable('transcriptions', {
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
+// meetings — видеовстречи (LiveKit). Комната создаётся в воркспейсе, участники
+// заходят из трекера (JWT) или по подписанной инвайт-ссылке (внешние гости).
+// Запись (по требованию) и субтитры — опциональны, тумблерами.
+//   status: active → ended
+// ─────────────────────────────────────────────────────────────────────────────
+export const meetingStatus = pgEnum('meeting_status', ['active', 'ended']);
+// Статус записи встречи: none → active (egress пишет) → processing (egress завершается,
+// заливает в MinIO) → ready (mp4 в бакете, есть ключ) | failed.
+export const recordingStatus = pgEnum('recording_status', ['none', 'active', 'processing', 'ready', 'failed']);
+
+export const meetings = pgTable('meetings', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  createdBy: uuid('created_by').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  title: text('title').notNull().default('Встреча'),
+  roomName: text('room_name').notNull(),                 // имя комнаты LiveKit
+  status: meetingStatus('status').notNull().default('active'),
+  captions: boolean('captions').notNull().default(false),  // живые субтитры вкл/выкл
+  recordingStatus: recordingStatus('recording_status').notNull().default('none'), // состояние записи
+  egressId: text('egress_id'),                           // id активного/последнего LiveKit Egress
+  recordingKey: text('recording_key'),                   // ключ mp4 в бакете MinIO (когда ready)
+  transcriptionId: uuid('transcription_id').references(() => transcriptions.id, { onDelete: 'set null' }), // запись → расшифровка
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  endedAt: timestamp('ended_at', { withTimezone: true }),
+}, (t) => ({
+  workspaceIdx: index('meetings_workspace_idx').on(t.workspaceId),
+  roomUnique: unique('meetings_room_unique').on(t.roomName),
+}));
+
+// ─────────────────────────────────────────────────────────────────────────────
 // push_subscriptions — Web Push (PWA). Один user → много устройств.
 // ─────────────────────────────────────────────────────────────────────────────
 export const pushSubscriptions = pgTable('push_subscriptions', {

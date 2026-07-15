@@ -21,6 +21,20 @@ const schema = z.object({
   // Расшифровки встреч: общий том с хостовым воркером + токен воркера.
   TRANSCRIBE_DATA_DIR: z.string().default('/data'),
   WORKER_TOKEN: z.string().default(''),
+  // Видеовстречи (LiveKit). Ключ и секрет — только в backend/.env на 158.
+  LIVEKIT_API_KEY: z.string().default(''),
+  LIVEKIT_API_SECRET: z.string().default(''),
+  LIVEKIT_WS_URL: z.string().default('wss://meet.appka.space'),
+  // LiveKit HTTP API (Egress) — внутренний адрес сервера на 158 (host-network).
+  LIVEKIT_HTTP_URL: z.string().default('http://127.0.0.1:7880'),
+  // MinIO (S3) для записей встреч. Бэк в сети appkacalypse_default → minio:9000.
+  S3_ENDPOINT: z.string().default('http://minio:9000'),
+  S3_REGION: z.string().default('us-east-1'),
+  S3_BUCKET: z.string().default('recordings'),
+  S3_ACCESS_KEY: z.string().default(''),
+  S3_SECRET_KEY: z.string().default(''),
+  // Endpoint MinIO, который передаётся ВНУТРЬ egress-запроса (egress host-net → 127.0.0.1:9000).
+  S3_EGRESS_ENDPOINT: z.string().default('http://127.0.0.1:9000'),
 });
 
 export const env = schema.parse(process.env);

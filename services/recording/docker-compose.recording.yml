@@ -1,0 +1,47 @@
+# Инфра записи встреч: MinIO (S3-хранилище) + Redis (шина LiveKit↔Egress) + LiveKit Egress.
+# Живёт на 158. Redis+Egress в host-network — достают LiveKit ws :7880 и друг друга по 127.0.0.1.
+# MinIO — в сети appkacalypse_default (бэкенд ходит по имени minio:9000) + публикует
+# 127.0.0.1:9000/9001 для egress (host-net) и локального доступа. Наружу MinIO НЕ торчит.
+# Запуск: docker compose -p akcrec -f docker-compose.recording.yml --env-file .env up -d
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: akc-redis
+    network_mode: host
+    command: redis-server --bind 127.0.0.1 --port 6379 --save "" --appendonly no
+    restart: unless-stopped
+
+  egress:
+    image: livekit/egress:latest
+    container_name: akc-egress
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      EGRESS_CONFIG_FILE: /etc/egress.yaml
+    volumes:
+      - ./egress.yaml:/etc/egress.yaml:ro
+    cap_add:
+      - SYS_ADMIN          # headless Chrome (RoomComposite) требует
+    shm_size: 1gb
+    tmpfs:
+      - /tmp
+
+  minio:
+    image: minio/minio:latest
+    container_name: akc-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - /root/minio/data:/data
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    networks:
+      - appkacalypse_default
+
+networks:
+  appkacalypse_default:
+    external: true

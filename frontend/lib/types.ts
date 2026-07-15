@@ -130,6 +130,22 @@ export interface Transcription {
   createdAt: string;
 }
 
+export type MeetingStatus = "active" | "ended";
+export type RecordingStatus = "none" | "active" | "processing" | "ready" | "failed";
+
+export interface Meeting {
+  id: string;
+  title: string;
+  status: MeetingStatus;
+  captions: boolean;
+  recordingStatus: RecordingStatus;
+  recordingKey: string | null;
+  transcriptionId: string | null;
+  createdAt: string;
+  endedAt: string | null;
+  canManage?: boolean;
+}
+
 export interface Me {
   id: string;
   displayName: string;

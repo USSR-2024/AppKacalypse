@@ -11,6 +11,9 @@ services:
       - "80:80"
       - "443:443"
       - "443:443/udp"
+    # Доступ к LiveKit (host-network :7880) для проксирования wss meet.appka.space.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

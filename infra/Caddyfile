@@ -17,6 +17,14 @@ appka.space, www.appka.space, {$DOMAIN_TASKS} {
 	}
 }
 
+# Видеовстречи: сигналинг LiveKit (wss). LiveKit крутится в host-network на :7880,
+# Caddy достаёт его через host-gateway (в docker-compose.yml у caddy добавлено
+# extra_hosts: "host.docker.internal:host-gateway"). Активировать после DNS
+# meet.appka.space → 158.255.0.82. Медиа (UDP 50000-50200 / TURN 3478) идёт мимо Caddy.
+meet.appka.space {
+	reverse_proxy host.docker.internal:7880
+}
+
 # Локально / без домена — отдаём по IP с internal-сертификатом.
 # Закомментируй блок выше и раскомментируй ниже для dev:
 # :443 {

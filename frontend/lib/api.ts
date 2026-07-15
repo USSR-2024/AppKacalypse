@@ -6,7 +6,7 @@ import { useAuth } from "./store";
 function currentWorkspace(): string | null {
   if (typeof window === "undefined") return null;
   const seg = window.location.pathname.split("/").filter(Boolean)[0];
-  if (!seg || ["login", "auth", "owner"].includes(seg)) return null;
+  if (!seg || ["login", "auth", "owner", "join"].includes(seg)) return null;
   return seg;
 }
 

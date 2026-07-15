@@ -1,0 +1,14 @@
+# LiveKit Egress — пишет RoomComposite (сетка + звук) в mp4 и грузит в MinIO.
+# S3-выход задаётся бэкендом в самом запросе StartRoomCompositeEgress (endpoint MinIO,
+# бакет, ключ, креды). Здесь — только связь с LiveKit-сервером и Redis.
+#
+# ШАБЛОН. Реальный конфиг — только на 158 в /root/recording/egress.yaml (под .gitignore).
+# Развернуть: cp egress.yaml.example egress.yaml && подставить ключи.
+# Ключи должны совпадать с keys в livekit.yaml и с LIVEKIT_API_KEY/SECRET в backend/.env.
+redis:
+  address: 127.0.0.1:6379
+api_key: <LIVEKIT_API_KEY>
+api_secret: <LIVEKIT_API_SECRET>
+ws_url: ws://127.0.0.1:7880   # LiveKit в host-network на том же 158
+insecure: true                # локальный ws без TLS
+log_level: info

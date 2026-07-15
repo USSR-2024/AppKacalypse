@@ -17,6 +17,7 @@ import { pushRoutes } from './routes/push.js';
 import { broadcastRoutes } from './routes/broadcast.js';
 import { workspaceRoutes, ownerRoutes, memberRoutes } from './routes/workspaces.js';
 import { transcriptionRoutes, transcribeWorkerRoutes } from './routes/transcriptions.js';
+import { meetingRoutes, meetingGuestRoutes, captionWorkerRoutes, livekitWebhookRoutes } from './routes/meetings.js';
 import { startScheduler } from './lib/scheduler.js';
 
 const app = new Hono();
@@ -40,6 +41,10 @@ app.route('/api/owner', ownerRoutes);
 app.route('/api/members', memberRoutes);
 app.route('/api/transcriptions', transcriptionRoutes);
 app.route('/api/transcribe-worker', transcribeWorkerRoutes);
+app.route('/api/meetings', meetingRoutes);
+app.route('/api/join', meetingGuestRoutes);
+app.route('/api/caption-worker', captionWorkerRoutes);
+app.route('/api/livekit', livekitWebhookRoutes);
 
 // Текущий пользователь по JWT.
 app.get('/api/me', requireAuth, async (c) => {
