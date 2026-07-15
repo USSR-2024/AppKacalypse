@@ -13,7 +13,8 @@ const wm = schema.workspaceMembers;
 const wi = schema.workspaceInvites;
 
 // Зарезервированные слаги (конфликтуют с путями приложения).
-const RESERVED = new Set(['api', 'owner', 'auth', 'login', 'app', 'admin', 'static', '_next', 'health', 'sw.js']);
+// 'join' — публичные инвайт-ссылки на встречи (/join/<token>), верхний уровень.
+const RESERVED = new Set(['api', 'owner', 'auth', 'login', 'app', 'admin', 'static', '_next', 'health', 'sw.js', 'join']);
 const slugSchema = z.string().regex(/^[a-z0-9-]{2,32}$/, 'slug: 2-32 символа a-z0-9-');
 
 /** Платформенный owner (users.role='owner'). */
