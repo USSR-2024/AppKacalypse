@@ -1,7 +1,7 @@
 "use client";
-import { useBackClose } from "@/lib/useBackClose";
+import { Sheet } from "@/components/Sheet";
 
-// Лёгкое подтверждение действия (bottom-sheet). Закрывается тапом мимо и кнопкой «Назад».
+// Лёгкое подтверждение действия. Шторка на телефоне, диалог по центру на десктопе (см. Sheet).
 export function ConfirmSheet({
   title,
   message,
@@ -17,29 +17,21 @@ export function ConfirmSheet({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  useBackClose(true, onCancel);
-
   return (
-    <div className="fixed inset-0 z-[70] flex flex-col justify-end bg-black/50 lg:items-center lg:justify-center" onClick={onCancel}>
-      <div
-        className="mx-auto w-full max-w-md rounded-t-3xl bg-surface-2 p-5 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] lg:max-w-sm lg:rounded-3xl lg:pb-5 lg:shadow-[var(--shadow-strong)]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-border lg:hidden" />
-        <p className="text-lg font-medium">{title}</p>
-        {message && <p className="mt-1 text-sm text-muted">{message}</p>}
-        <div className="mt-5 flex gap-2">
-          <button onClick={onCancel} className="flex-1 rounded-xl bg-surface py-3 text-muted">
-            Отмена
-          </button>
-          <button
-            onClick={onConfirm}
-            className={`flex-1 rounded-xl py-3 font-medium text-white ${danger ? "bg-danger" : "bg-accent"}`}
-          >
-            {confirmLabel}
-          </button>
-        </div>
+    <Sheet onClose={onCancel} size="sm" z="z-[70]">
+      <p className="text-lg font-medium">{title}</p>
+      {message && <p className="mt-1 text-sm text-muted">{message}</p>}
+      <div className="mt-5 flex gap-2">
+        <button onClick={onCancel} className="flex-1 rounded-xl bg-surface py-3 text-muted">
+          Отмена
+        </button>
+        <button
+          onClick={onConfirm}
+          className={`flex-1 rounded-xl py-3 font-medium text-white ${danger ? "bg-danger" : "bg-accent"}`}
+        >
+          {confirmLabel}
+        </button>
       </div>
-    </div>
+    </Sheet>
   );
 }

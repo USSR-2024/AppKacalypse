@@ -3,12 +3,15 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useWs, wsHref } from "@/lib/ws";
 
+// Встречи — полноценная вкладка: планёрки идут через них каждый день, а с телефона
+// до раздела было НЕ добраться (жил только в десктопном сайдбаре).
 const items = [
   { href: "/today", label: "Сегодня", icon: "☀️" },
   { href: "/inbox", label: "Входящие", icon: "📥" },
   { href: "/assistant", label: "Ассистент", icon: "🤖" },
   { href: "/projects", label: "Проекты", icon: "📁" },
   { href: "/calendar", label: "Календарь", icon: "🗓" },
+  { href: "/meet", label: "Встречи", icon: "📹" },
 ];
 
 export function BottomNav() {
@@ -24,12 +27,13 @@ export function BottomNav() {
             <Link
               key={it.href}
               href={href}
-              className={`flex flex-1 flex-col items-center gap-0.5 pt-2 pb-1 text-[11px] ${
+              className={`flex min-w-0 flex-1 flex-col items-center gap-0.5 px-0.5 pt-2 pb-1 text-[10px] max-[359px]:px-0 max-[359px]:text-[9px] ${
                 active ? "text-accent" : "text-muted"
               }`}
             >
               <span className="text-lg">{it.icon}</span>
-              {it.label}
+              {/* Шесть вкладок: на узком экране подпись обрезаем, а не ломаем строку. */}
+              <span className="w-full truncate text-center">{it.label}</span>
             </Link>
           );
         })}

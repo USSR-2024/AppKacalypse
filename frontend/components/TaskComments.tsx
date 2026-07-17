@@ -4,7 +4,7 @@ import { mutate } from "swr";
 import { api } from "@/lib/api";
 import { useComments } from "@/lib/hooks";
 import { Avatar } from "@/components/Avatar";
-import { useBackClose } from "@/lib/useBackClose";
+import { Sheet } from "@/components/Sheet";
 import type { User } from "@/lib/types";
 
 // Обсуждение под задачей + @упоминания (упомянутым уходит уведомление).
@@ -14,7 +14,6 @@ export function TaskComments({ taskId, users }: { taskId: string; users: User[] 
   const [mentions, setMentions] = useState<string[]>([]);
   const [pick, setPick] = useState(false);
   const [busy, setBusy] = useState(false);
-  useBackClose(pick, () => setPick(false));
 
   const nameOf = (id: string) => users.find((u) => u.id === id)?.displayName ?? "—";
 
@@ -93,33 +92,26 @@ export function TaskComments({ taskId, users }: { taskId: string; users: User[] 
       </div>
 
       {pick && (
-        <div className="fixed inset-0 z-[60] flex flex-col justify-end bg-black/50" onClick={() => setPick(false)}>
-          <div
-            className="mx-auto max-h-[70vh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-surface-2 p-4"
-            style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-border" />
-            <p className="mb-2 px-1 text-sm font-medium text-muted">Упомянуть (уведомление)</p>
-            <div className="flex flex-col">
-              {users.map((u) => {
-                const on = mentions.includes(u.id);
-                return (
-                  <button
-                    key={u.id}
-                    onClick={() => toggleMention(u.id)}
-                    className={`flex items-center gap-3 rounded-xl px-2 py-3 text-left active:bg-surface ${on ? "text-accent" : ""}`}
-                  >
-                    <Avatar src={u.avatarUrl} name={u.displayName} className="h-7 w-7 shrink-0 bg-surface text-xs" />
-                    <span className="flex-1 truncate">{u.displayName}</span>
-                    {on && <span>✓</span>}
-                  </button>
-                );
-              })}
-            </div>
-            <button onClick={() => setPick(false)} className="mt-3 w-full rounded-xl bg-surface py-2.5 text-sm text-muted">Готово</button>
+        <Sheet onClose={() => setPick(false)} z="z-[60]" scroll="max-h-[70vh] lg:max-h-[60vh]">
+          <p className="mb-2 px-1 text-sm font-medium text-muted">Упомянуть (уведомление)</p>
+          <div className="flex flex-col">
+            {users.map((u) => {
+              const on = mentions.includes(u.id);
+              return (
+                <button
+                  key={u.id}
+                  onClick={() => toggleMention(u.id)}
+                  className={`flex items-center gap-3 rounded-xl px-2 py-3 text-left active:bg-surface lg:hover:bg-surface ${on ? "text-accent" : ""}`}
+                >
+                  <Avatar src={u.avatarUrl} name={u.displayName} className="h-7 w-7 shrink-0 bg-surface text-xs" />
+                  <span className="flex-1 truncate">{u.displayName}</span>
+                  {on && <span>✓</span>}
+                </button>
+              );
+            })}
           </div>
-        </div>
+          <button onClick={() => setPick(false)} className="mt-3 w-full rounded-xl bg-surface py-2.5 text-sm text-muted">Готово</button>
+        </Sheet>
       )}
     </section>
   );

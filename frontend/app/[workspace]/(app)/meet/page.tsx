@@ -6,7 +6,7 @@ import { fetcher, api } from "@/lib/api";
 import { useAuth } from "@/lib/store";
 import { useWs, wsHref } from "@/lib/ws";
 import { meetStr } from "@/lib/meetStrings";
-import { useBackClose } from "@/lib/useBackClose";
+import { Sheet } from "@/components/Sheet";
 import type { Meeting, MeetingKind } from "@/lib/types";
 
 // Локальные дата/время из <input type=date|time> → ISO со смещением часового пояса
@@ -171,7 +171,6 @@ function CreateSheet({ t, busy, onClose, onCreate }: {
   const [date, setDate] = useState("");
   const [time, setTime] = useState("10:00");
   const [err, setErr] = useState<string | null>(null);
-  useBackClose(true, onClose);
 
   function submit() {
     setErr(null);
@@ -191,59 +190,54 @@ function CreateSheet({ t, busy, onClose, onCreate }: {
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50" onClick={onClose}>
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-lg rounded-t-3xl bg-bg px-5 pb-[calc(env(safe-area-inset-bottom)+1.25rem)] pt-5"
-      >
-        <h2 className="mb-4 text-lg font-semibold">{t.newMeeting}</h2>
+    <Sheet onClose={onClose} size="lg">
+      <h2 className="mb-4 text-lg font-semibold">{t.newMeeting}</h2>
 
-        <div className="mb-4 flex flex-col gap-2">
-          {kinds.map(({ k, label, hint }) => (
-            <button
-              key={k}
-              onClick={() => setKind(k)}
-              className={`rounded-xl px-3 py-2.5 text-left transition ${kind === k ? "bg-accent text-white" : "bg-surface hover:bg-surface-2"}`}
-            >
-              <div className="text-sm font-medium">{label}</div>
-              <div className={`text-xs ${kind === k ? "text-white/75" : "text-muted"}`}>{hint}</div>
-            </button>
-          ))}
-        </div>
-
-        <label className="text-xs text-muted">{t.titleLabel}</label>
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder={t.meetingTitle}
-          className="mb-3 mt-1 w-full rounded-xl bg-surface px-3 py-2.5 text-sm outline-none"
-        />
-
-        {kind === "scheduled" && (
-          <div className="mb-3 flex gap-2">
-            <div className="flex-1">
-              <label className="text-xs text-muted">{t.dateLabel}</label>
-              <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-                className="mt-1 w-full rounded-xl bg-surface px-3 py-2.5 text-sm outline-none" />
-            </div>
-            <div className="w-32">
-              <label className="text-xs text-muted">{t.timeLabel}</label>
-              <input type="time" value={time} onChange={(e) => setTime(e.target.value)}
-                className="mt-1 w-full rounded-xl bg-surface px-3 py-2.5 text-sm outline-none" />
-            </div>
-          </div>
-        )}
-
-        {kind === "scheduled" && <p className="mb-3 text-xs text-muted">{t.opensBefore}</p>}
-        {err && <p className="mb-3 text-sm text-danger">{err}</p>}
-
-        <div className="flex gap-2">
-          <button onClick={onClose} className="flex-1 rounded-xl bg-surface px-4 py-3 text-sm font-medium">{t.cancel}</button>
-          <button onClick={submit} disabled={busy} className="flex-1 rounded-xl bg-accent px-4 py-3 text-sm font-medium text-white disabled:opacity-40">
-            {busy ? t.starting : kind === "instant" ? t.start : t.create}
+      <div className="mb-4 flex flex-col gap-2">
+        {kinds.map(({ k, label, hint }) => (
+          <button
+            key={k}
+            onClick={() => setKind(k)}
+            className={`rounded-xl px-3 py-2.5 text-left transition ${kind === k ? "bg-accent text-white" : "bg-surface hover:opacity-80"}`}
+          >
+            <div className="text-sm font-medium">{label}</div>
+            <div className={`text-xs ${kind === k ? "text-white/75" : "text-muted"}`}>{hint}</div>
           </button>
-        </div>
+        ))}
       </div>
-    </div>
+
+      <label className="text-xs text-muted">{t.titleLabel}</label>
+      <input
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        placeholder={t.meetingTitle}
+        className="mb-3 mt-1 w-full rounded-xl bg-surface px-3 py-2.5 text-sm outline-none"
+      />
+
+      {kind === "scheduled" && (
+        <div className="mb-3 flex gap-2">
+          <div className="flex-1">
+            <label className="text-xs text-muted">{t.dateLabel}</label>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+              className="mt-1 w-full rounded-xl bg-surface px-3 py-2.5 text-sm outline-none" />
+          </div>
+          <div className="w-32">
+            <label className="text-xs text-muted">{t.timeLabel}</label>
+            <input type="time" value={time} onChange={(e) => setTime(e.target.value)}
+              className="mt-1 w-full rounded-xl bg-surface px-3 py-2.5 text-sm outline-none" />
+          </div>
+        </div>
+      )}
+
+      {kind === "scheduled" && <p className="mb-3 text-xs text-muted">{t.opensBefore}</p>}
+      {err && <p className="mb-3 text-sm text-danger">{err}</p>}
+
+      <div className="flex gap-2">
+        <button onClick={onClose} className="flex-1 rounded-xl bg-surface px-4 py-3 text-sm font-medium">{t.cancel}</button>
+        <button onClick={submit} disabled={busy} className="flex-1 rounded-xl bg-accent px-4 py-3 text-sm font-medium text-white disabled:opacity-40">
+          {busy ? t.starting : kind === "instant" ? t.start : t.create}
+        </button>
+      </div>
+    </Sheet>
   );
 }
