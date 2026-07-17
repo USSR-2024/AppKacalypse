@@ -56,6 +56,11 @@ services:
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
+    # Только на loopback хоста, наружу не торчит. Нужен GPU-агенту (он в host-network):
+    # перед загрузкой своих весов он просит ollama снять qwen с карты — иначе тот
+    # держит её всю по keep_alive и субтитрам не хватает места.
+    ports:
+      - "127.0.0.1:11434:11434"
     volumes:
       - ollama-data:/root/.ollama
     deploy:

@@ -1,5 +1,8 @@
-# GPU-агент AppKacalypse: живые субтитры + расшифровка файлов на ОДНОЙ резидентной
-# large-v3 (второй копии весов в 16 ГБ карты не держим). Живёт на 158 в /root/caption-agent.
+# GPU-агент AppKacalypse: живые субтитры + расшифровка файлов на ОДНОЙ large-v3
+# (второй копии весов в 16 ГБ карты не держим). Живёт на 158 в /root/caption-agent.
+# Модели грузятся ПОД РАБОТУ и отдаются выходом процесса после простоя (см. agent.py) —
+# в паузах карта достаётся qwen целиком. restart: unless-stopped обязателен: это и есть
+# механизм пробуждения.
 # Запуск: cd /root/caption-agent && docker compose -p akcgpu -f docker-compose.caption.yml --env-file .env up -d --build
 #
 # host-network: LiveKit (:7880) и бэкенд (:8081) слушают на 127.0.0.1 хоста.
@@ -24,6 +27,10 @@ services:
       ASR_MODEL: large-v3
       LIVEKIT_URL: ws://127.0.0.1:7880
       BACKEND_URL: http://127.0.0.1:8081
+      # Выгрузить qwen с карты перед загрузкой своих весов (ollama слушает loopback хоста).
+      OLLAMA_URL: http://127.0.0.1:11434
+      # Сколько простаивать с моделями на карте до выхода (docker поднимет заново).
+      IDLE_EXIT_SEC: "120"
       DATA_DIR: /data
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}

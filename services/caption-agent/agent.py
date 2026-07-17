@@ -16,6 +16,19 @@ faster_whisper.WhisperModel, поэтому один объект умеет и 
 Приоритет: субтитры > расшифровка. Пока идёт встреча с субтитрами, бэкенд не
 выдаёт файловых задач (гейт в /api/transcribe-worker/claim), плюс страховка здесь.
 
+★ СОН (модели грузятся только под работу). Карта одна на всех, и резидентные 6.7 ГБ
+агента не давали qwen (нужно ~14.5 ГБ) поместиться целиком — тот наполовину считал
+на CPU: 3 т/с на протоколах и ~10 с на разбор задачи ассистентом. Субтитры и
+расшифровки нужны малую долю времени, поэтому агент:
+  • при старте моделей НЕ грузит — только дёшево опрашивает бэкенд;
+  • грузит их, когда появилась работа (комната с субтитрами или файл в очереди);
+  • «выгружает» через ВЫХОД ПРОЦЕССА после IDLE_EXIT_SEC простоя — docker его
+    поднимет заново (restart: unless-stopped), и он вернётся к дешёвому опросу.
+Почему выход, а не unload в процессе: порядок создания моделей критичен (см. ниже),
+и повторять его в живом процессе — напрашиваться на CUDNN_STATUS_VERSION_MISMATCH;
+смерть процесса освобождает VRAM гарантированно, без утечек и фрагментации.
+Цена — холодный старт (десятки секунд) на первом звонке после простоя.
+
 ENV:
   LIVEKIT_URL   ws://127.0.0.1:7880   (агент на том же хосте, что LiveKit)
   LIVEKIT_API_KEY / LIVEKIT_API_SECRET
@@ -23,10 +36,14 @@ ENV:
   BACKEND_URL / WORKER_TOKEN          доступ к очереди и списку комнат
   HF_TOKEN      для диаризации (pyannote); без него расшифровка без спикеров
   DATA_DIR      общий том с бэкендом (/data/<id>/audio.*)
+  OLLAMA_URL    чтобы вытолкнуть qwen с карты перед загрузкой своих весов
+  IDLE_EXIT_SEC сколько простаивать с моделями до выхода (по умолчанию 120)
 """
 import asyncio
 import json
 import os
+import sys
+import time
 import uuid
 import glob
 import numpy as np
@@ -47,29 +64,103 @@ BACKEND_URL = os.environ.get("BACKEND_URL", "http://127.0.0.1:8081")
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "")
 HF_TOKEN = os.environ.get("HF_TOKEN") or None
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:14b")
+IDLE_EXIT_SEC = int(os.environ.get("IDLE_EXIT_SEC", "120"))
 SR = 16000
 NLLB = {"ru": "rus_Cyrl", "es": "spa_Latn"}
 
-print(f"[agent] whisper '{ASR_MODEL}' на GPU (резидентно, общая для субтитров и файлов)…", flush=True)
-asr = WhisperModel(ASR_MODEL, device="cuda", compute_type="float16")
+# Веса живут здесь; None = спим, карта свободна.
+asr = None
+file_pipe = None
+vad_model = None
+_tok = None
+_mt = None
+models_ready = False
 
-# Файловый пайплайн поверх ТОЙ ЖЕ модели (model=asr) — второй копии весов в VRAM нет.
-#
-# ★ ПОРЯДОК ВАЖЕН: строго здесь, до silero и NLLB. Внутри whisperx свой VAD от
-# pyannote, а в нём RNN: перенос на GPU дёргает torch._cudnn_rnn_flatten_weight.
-# Если к этому моменту в процессе уже подняты другие torch-модели, ядра cuDNN для
-# RNN падают с CUDNN_STATUS_VERSION_MISMATCH (ctranslate2 и torch тянут разные
-# сборки cuDNN). Создать пайплайн сразу после ASR — и дальше он живёт резидентно.
-# Язык задаётся не тут, а на каждый вызов transcribe(language=...).
-print("[agent] файловый пайплайн whisperx (та же модель)…", flush=True)
-file_pipe = whisperx.load_model(ASR_MODEL, "cuda", compute_type="float16", model=asr)
 
-print("[agent] silero-vad…", flush=True)
-vad_model = load_silero_vad()
-print("[agent] NLLB-200 (перевод)…", flush=True)
-_tok = AutoTokenizer.from_pretrained("facebook/nllb-200-distilled-600M")
-_mt = AutoModelForSeq2SeqLM.from_pretrained("facebook/nllb-200-distilled-600M").to("cuda").eval()
-print("[agent] модели готовы", flush=True)
+def gpu_free_gb() -> float:
+    free, _total = torch.cuda.mem_get_info()
+    return free / 2**30
+
+
+def evict_qwen():
+    """Просим ollama снять модель с карты.
+
+    Без этого сон бессмыслен: как только агент освободит VRAM, qwen займёт её всю
+    (~14.5 ГБ) и будет держать час по keep_alive — а начавшийся звонок не сможет
+    поднять свои веса. Ollama обрабатывает запросы серийно, поэтому если идёт
+    генерация протокола, выгрузка подождёт её конца (это десятки секунд, не часы).
+    """
+    try:
+        requests.post(
+            f"{OLLAMA_URL}/api/generate",
+            json={"model": OLLAMA_MODEL, "keep_alive": 0},
+            timeout=300,
+        )
+        print("[gpu] qwen выгружен с карты", flush=True)
+    except Exception as e:
+        # Не фатально: возможно, qwen и не был загружен. Решает проверка свободной VRAM ниже.
+        print(f"[gpu] выгрузить qwen не вышло ({e}) — проверяю карту", flush=True)
+
+
+_last_evict = 0.0
+
+
+def load_models(need_gb: float = 8.0):
+    """Поднимает веса на карту. Идемпотентна. Зовётся только когда появилась работа.
+
+    Бросает RuntimeError, если карту не освободили: звонок повторит попытку через
+    пару секунд, а файловая задача честно отметится как failed. Выходить из процесса
+    отсюда нельзя — код крутится в executor-потоке, где sys.exit убьёт только поток.
+    """
+    global asr, file_pipe, vad_model, _tok, _mt, models_ready, _last_evict
+    if models_ready:
+        return
+    t0 = time.time()
+
+    if gpu_free_gb() < need_gb:
+        # evict_qwen блокируется до конца текущей генерации, поэтому дёргать его
+        # на каждой попытке незачем — раз в минуту достаточно.
+        if time.time() - _last_evict > 60:
+            _last_evict = time.time()
+            evict_qwen()
+        for _ in range(30):                      # ollama освобождает карту не мгновенно
+            if gpu_free_gb() >= need_gb:
+                break
+            time.sleep(1)
+    free = gpu_free_gb()
+    if free < need_gb:
+        raise RuntimeError(f"на карте свободно {free:.1f} ГБ, нужно {need_gb:.1f} — qwen не отдал карту")
+
+    print(f"[agent] whisper '{ASR_MODEL}' на GPU (свободно {free:.1f} ГБ)…", flush=True)
+    asr = WhisperModel(ASR_MODEL, device="cuda", compute_type="float16")
+
+    # Файловый пайплайн поверх ТОЙ ЖЕ модели (model=asr) — второй копии весов в VRAM нет.
+    #
+    # ★ ПОРЯДОК ВАЖЕН: строго здесь, до silero и NLLB. Внутри whisperx свой VAD от
+    # pyannote, а в нём RNN: перенос на GPU дёргает torch._cudnn_rnn_flatten_weight.
+    # Если к этому моменту в процессе уже подняты другие torch-модели, ядра cuDNN для
+    # RNN падают с CUDNN_STATUS_VERSION_MISMATCH (ctranslate2 и torch тянут разные
+    # сборки cuDNN). Создать пайплайн сразу после ASR — и дальше он живёт резидентно.
+    # Язык задаётся не тут, а на каждый вызов transcribe(language=...).
+    print("[agent] файловый пайплайн whisperx (та же модель)…", flush=True)
+    file_pipe = whisperx.load_model(ASR_MODEL, "cuda", compute_type="float16", model=asr)
+
+    print("[agent] silero-vad…", flush=True)
+    vad_model = load_silero_vad()
+    print("[agent] NLLB-200 (перевод)…", flush=True)
+    _tok = AutoTokenizer.from_pretrained("facebook/nllb-200-distilled-600M")
+    _mt = AutoModelForSeq2SeqLM.from_pretrained("facebook/nllb-200-distilled-600M").to("cuda").eval()
+    models_ready = True
+
+    # Прогрев CUDA-ядер, чтобы первое реальное распознавание/перевод не тормозили.
+    try:
+        transcribe(np.zeros(int(SR * 0.5), dtype=np.float32), "ru")
+        translate("привет", "ru", "es")
+    except Exception as e:
+        print(f"[agent] прогрев пропущен: {e}", flush=True)
+    print(f"[agent] модели готовы за {time.time() - t0:.0f}с (свободно на карте {gpu_free_gb():.1f} ГБ)", flush=True)
 
 
 # Фразы-галлюцинации Whisper (зашиты из ютуб-концовок; в реальном созвоне не встречаются).
@@ -330,7 +421,7 @@ def run_file_job(job) -> int:
     return replicas
 
 
-async def file_worker(active: dict, poll: int = 10):
+async def file_worker(active: dict, busy: dict, poll: int = 10):
     """Берёт задачи расшифровки, только когда нет живых субтитров.
     Начатый файл не прерываем: whisperx считает файл одним вызовом."""
     loop = asyncio.get_event_loop()
@@ -348,7 +439,11 @@ async def file_worker(active: dict, poll: int = 10):
             await asyncio.sleep(poll)
             continue
         print(f"[file] взял задачу {job['id']} (lang={job.get('lang')})", flush=True)
+        # Задача уже заклеймлена (status='transcribing') — держим флаг занятости, чтобы
+        # сторож простоя не выключил процесс посреди загрузки моделей или расшифровки.
+        busy["file"] = True
         try:
+            await loop.run_in_executor(None, load_models)
             await loop.run_in_executor(None, run_file_job, job)
             await loop.run_in_executor(None, report_file_job, job["id"], True, "")
         except Exception as e:
@@ -358,6 +453,7 @@ async def file_worker(active: dict, poll: int = 10):
             except Exception:
                 pass
         finally:
+            busy["file"] = False
             torch.cuda.empty_cache()
 
 
@@ -373,19 +469,13 @@ def fetch_caption_rooms() -> set:
 
 async def main():
     active: dict = {}
+    busy: dict = {"file": False}
+    idle_since = time.time()
     loop = asyncio.get_event_loop()
-    asyncio.create_task(seg_worker())          # серийный обработчик сегментов субтитров
-    asyncio.create_task(file_worker(active))   # расшифровка файлов в паузах между встречами
+    asyncio.create_task(seg_worker())                 # серийный обработчик сегментов субтитров
+    asyncio.create_task(file_worker(active, busy))    # расшифровка файлов в паузах между встречами
 
-    # Прогрев CUDA-ядер, чтобы ПЕРВОЕ реальное распознавание/перевод не тормозили.
-    try:
-        await loop.run_in_executor(None, transcribe, np.zeros(int(SR * 0.5), dtype=np.float32), "ru")
-        await loop.run_in_executor(None, translate, "привет", "ru", "es")
-        print("[agent] прогрев выполнен", flush=True)
-    except Exception as e:
-        print(f"[agent] прогрев пропущен: {e}", flush=True)
-
-    print("[agent] слежу за комнатами с субтитрами (опрос 2с)…", flush=True)
+    print(f"[agent] слежу за комнатами (опрос 2с); модели — под работу, выход после {IDLE_EXIT_SEC}с простоя", flush=True)
     while True:
         try:
             wanted = await loop.run_in_executor(None, fetch_caption_rooms)
@@ -393,9 +483,29 @@ async def main():
             print(f"[agent] ошибка опроса бэка: {e}", flush=True)
             await asyncio.sleep(2)
             continue
+
+        # Спим и работы нет — держим карту свободной для qwen, выходить незачем.
+        if not wanted and not active and not busy["file"] and not models_ready:
+            await asyncio.sleep(2)
+            continue
+
+        # Работы нет, но веса на карте: отдаём её через выход процесса. Docker поднимет
+        # нас заново (restart: unless-stopped), и вернёмся к дешёвому опросу.
+        if not wanted and not active and not busy["file"] and models_ready:
+            if time.time() - idle_since >= IDLE_EXIT_SEC:
+                print(f"[agent] простой {IDLE_EXIT_SEC}с — освобождаю карту и выхожу", flush=True)
+                sys.exit(0)
+            await asyncio.sleep(2)
+            continue
+
+        idle_since = time.time()
+
         # заходим в новые комнаты с субтитрами
         for name in wanted - set(active):
             try:
+                # Первым делом веса: без них публиковать субтитры нечем. Комната подождёт
+                # десятки секунд — участники в это время просто говорят без подписей.
+                await loop.run_in_executor(None, load_models)
                 await join_room(name, active)
             except Exception as e:
                 print(f"[agent] не смог войти в '{name}': {e}", flush=True)
