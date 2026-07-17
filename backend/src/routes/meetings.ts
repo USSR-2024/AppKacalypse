@@ -5,10 +5,11 @@ import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { and, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { SignJWT, jwtVerify } from 'jose';
 import { db, schema } from '../db/index.js';
+import { joinGate, liveNow } from '../lib/meeting-window.js';
 import { requireAuth } from '../lib/auth-middleware.js';
 import { requireWorkspace } from '../lib/workspace-middleware.js';
 import { env } from '../lib/env.js';
@@ -17,7 +18,12 @@ import { EgressStatus } from 'livekit-server-sdk';
 import { startRecording, stopRecording, receiveWebhook, getRecordingStream } from '../lib/recording.js';
 
 const mt = schema.meetings;
-const inviteSecret = () => new TextEncoder().encode(env.JWT_SECRET);
+
+// Код инвайт-ссылки. Живёт в БД, а не в подписанном JWT: ссылка постоянной комнаты
+// не должна протухать, а протухающую нельзя отозвать. 96 бит — не перебирается.
+const newInviteCode = () => randomBytes(12).toString('base64url');
+
+const inviteUrl = (code: string) => `${env.PUBLIC_APP_URL}/join/${code}`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /api/meetings — управление встречами (члены воркспейса)
@@ -31,6 +37,7 @@ meetingRoutes.get('/', async (c) => {
   const rows = await db
     .select({
       id: mt.id, title: mt.title, status: mt.status, captions: mt.captions,
+      kind: mt.kind, startAt: mt.startAt, inviteCode: mt.inviteCode,
       recordingStatus: mt.recordingStatus, recordingKey: mt.recordingKey,
       transcriptionId: mt.transcriptionId,
       createdAt: mt.createdAt, endedAt: mt.endedAt,
@@ -38,7 +45,12 @@ meetingRoutes.get('/', async (c) => {
     .from(mt)
     .where(eq(mt.workspaceId, w.id))
     .orderBy(desc(mt.createdAt));
-  return c.json(rows);
+  // Ссылку-приглашение раздают owner/admin — им она и видна в списке.
+  const canInvite = w.role === 'owner' || w.role === 'admin';
+  return c.json(rows.map(({ inviteCode, ...r }) => ({
+    ...r,
+    inviteUrl: canInvite && inviteCode ? inviteUrl(inviteCode) : null,
+  })));
 });
 
 // Детали одной встречи (для карточки + поллинга статуса записи/расшифровки).
@@ -46,26 +58,44 @@ meetingRoutes.get('/:id', async (c) => {
   const w = c.get('workspace');
   const [m] = await db.select({
     id: mt.id, title: mt.title, status: mt.status, captions: mt.captions,
+    kind: mt.kind, startAt: mt.startAt, inviteCode: mt.inviteCode,
     recordingStatus: mt.recordingStatus, recordingKey: mt.recordingKey,
     transcriptionId: mt.transcriptionId, createdAt: mt.createdAt, endedAt: mt.endedAt,
   }).from(mt).where(and(eq(mt.id, c.req.param('id')!), eq(mt.workspaceId, w.id))).limit(1);
   if (!m) return c.json({ error: 'not_found' }, 404);
-  return c.json({ ...m, canManage: w.role === 'owner' || w.role === 'admin' });
+  const canManage = w.role === 'owner' || w.role === 'admin';
+  const { inviteCode, ...rest } = m;
+  return c.json({ ...rest, canManage, inviteUrl: canManage && inviteCode ? inviteUrl(inviteCode) : null });
 });
 
-// Создать встречу. Возвращает id + имя комнаты LiveKit.
+// Создать встречу: сейчас (instant), на время (scheduled) или постоянную комнату
+// (permanent). Ссылка выдаётся сразу — её кладут в приглашение календаря заранее.
 meetingRoutes.post('/', async (c) => {
   const w = c.get('workspace');
   const u = c.get('user');
   const body = await c.req.json().catch(() => ({}));
-  const title = z.string().trim().min(1).max(200).catch('Встреча').parse(body?.title);
-  const captions = z.boolean().catch(false).parse(body?.captions);  // субтитры по умолчанию ВЫКЛ (юзер включает сам)
+  const p = z.object({
+    title: z.string().trim().min(1).max(200).catch('Встреча'),
+    captions: z.boolean().catch(false),  // субтитры по умолчанию ВЫКЛ (юзер включает сам)
+    kind: z.enum(['instant', 'scheduled', 'permanent']).catch('instant'),
+    startAt: z.string().datetime({ offset: true }).optional(),
+  }).safeParse(body ?? {});
+  if (!p.success) return c.json({ error: 'bad_request' }, 400);
+  const { title, captions, kind } = p.data;
+
+  // Время обязательно и только у scheduled: у постоянной комнаты его нет по смыслу,
+  // а «начать сейчас» — это instant.
+  if (kind === 'scheduled' && !p.data.startAt) return c.json({ error: 'start_required' }, 400);
+  const startAt = kind === 'scheduled' && p.data.startAt ? new Date(p.data.startAt) : null;
+  if (startAt && startAt.getTime() < Date.now() - 24 * 60 * 60 * 1000) {
+    return c.json({ error: 'start_in_past' }, 400);
+  }
 
   const roomName = `ws_${w.id.slice(0, 8)}_${randomUUID().slice(0, 8)}`;
   const [row] = await db.insert(mt)
-    .values({ workspaceId: w.id, createdBy: u.sub, title, roomName, captions })
-    .returning({ id: mt.id, roomName: mt.roomName });
-  return c.json(row, 201);
+    .values({ workspaceId: w.id, createdBy: u.sub, title, roomName, captions, kind, startAt, inviteCode: newInviteCode() })
+    .returning({ id: mt.id, roomName: mt.roomName, kind: mt.kind, startAt: mt.startAt, inviteCode: mt.inviteCode });
+  return c.json({ ...row, inviteUrl: row!.inviteCode ? inviteUrl(row!.inviteCode) : null }, 201);
 });
 
 // Токен на вход для члена воркспейса. identity = userId, язык из профиля → metadata.
@@ -75,7 +105,9 @@ meetingRoutes.post('/:id/token', async (c) => {
   const [m] = await db.select().from(mt)
     .where(and(eq(mt.id, c.req.param('id')!), eq(mt.workspaceId, w.id))).limit(1);
   if (!m) return c.json({ error: 'not_found' }, 404);
-  if (m.status !== 'active') return c.json({ error: 'ended' }, 409);
+  const block = joinGate(m);
+  if (block === 'ended') return c.json({ error: 'ended' }, 409);
+  if (block === 'too_early') return c.json({ error: 'too_early', startAt: m.startAt, title: m.title }, 409);
 
   const [usr] = await db.select({ name: schema.users.displayName, lang: schema.users.lang })
     .from(schema.users).where(eq(schema.users.id, u.sub)).limit(1);
@@ -92,7 +124,9 @@ meetingRoutes.post('/:id/token', async (c) => {
   });
 });
 
-// Инвайт-ссылка для внешних. Подписанный short-lived JWT, без аккаунта. owner/admin.
+// Инвайт-ссылка для внешних (вход без аккаунта). owner/admin.
+// Код выдаётся при создании встречи; тут он только показывается — старым встречам
+// (созданным до планирования) код заводится при первом обращении.
 meetingRoutes.post('/:id/invite', async (c) => {
   const w = c.get('workspace');
   if (w.role !== 'owner' && w.role !== 'admin') return c.json({ error: 'forbidden' }, 403);
@@ -101,14 +135,24 @@ meetingRoutes.post('/:id/invite', async (c) => {
   if (!m) return c.json({ error: 'not_found' }, 404);
   if (m.status !== 'active') return c.json({ error: 'ended' }, 409);
 
-  const ttl = 60 * 60 * 24; // ссылка живёт 24 часа
-  const now = Math.floor(Date.now() / 1000);
-  const invite = await new SignJWT({ mid: m.id, kind: 'meet-invite' })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt(now)
-    .setExpirationTime(now + ttl)
-    .sign(inviteSecret());
-  return c.json({ url: `${env.PUBLIC_APP_URL}/join/${invite}`, expiresIn: ttl });
+  let code = m.inviteCode;
+  if (!code) {
+    code = newInviteCode();
+    await db.update(mt).set({ inviteCode: code }).where(eq(mt.id, m.id));
+  }
+  return c.json({ url: inviteUrl(code) });
+});
+
+// Перевыпустить ссылку: старая перестаёт работать. owner/admin.
+meetingRoutes.post('/:id/invite/rotate', async (c) => {
+  const w = c.get('workspace');
+  if (w.role !== 'owner' && w.role !== 'admin') return c.json({ error: 'forbidden' }, 403);
+  const code = newInviteCode();
+  const [row] = await db.update(mt).set({ inviteCode: code })
+    .where(and(eq(mt.id, c.req.param('id')!), eq(mt.workspaceId, w.id), eq(mt.status, 'active')))
+    .returning({ id: mt.id });
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  return c.json({ url: inviteUrl(code) });
 });
 
 // Вкл/выкл субтитры для встречи (управляет тем, зайдёт ли caption-agent в комнату).
@@ -250,21 +294,25 @@ meetingRoutes.post('/:id/end', async (c) => {
 // ─────────────────────────────────────────────────────────────────────────────
 export const meetingGuestRoutes = new Hono();
 
-// Проверить инвайт (для страницы входа: показать название встречи).
+// Проверить инвайт (страница входа: название встречи, а для запланированной —
+// время начала, чтобы пришедший заранее увидел «начнётся в 10:00», а не «ссылка битая»).
 meetingGuestRoutes.post('/preview', async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  const invite = z.string().min(10).safeParse(body?.invite);
+  const invite = z.string().min(8).safeParse(body?.invite);
   if (!invite.success) return c.json({ error: 'bad_invite' }, 400);
   const m = await resolveInvite(invite.data);
-  if (!m) return c.json({ error: 'invalid_or_expired' }, 401);
-  return c.json({ title: m.title, captions: m.captions });
+  if (!m || joinGate(m) === 'ended') return c.json({ error: 'invalid_or_expired' }, 401);
+  return c.json({
+    title: m.title, captions: m.captions, kind: m.kind, startAt: m.startAt,
+    canJoin: joinGate(m) === null,
+  });
 });
 
 // Выдать гостю токен LiveKit по инвайту + введённому имени и языку.
 meetingGuestRoutes.post('/token', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const p = z.object({
-    invite: z.string().min(10),
+    invite: z.string().min(8),
     name: z.string().trim().min(1).max(80),
     lang: z.enum(['ru', 'es']).catch('ru'),
   }).safeParse(body);
@@ -272,6 +320,9 @@ meetingGuestRoutes.post('/token', async (c) => {
 
   const m = await resolveInvite(p.data.invite);
   if (!m) return c.json({ error: 'invalid_or_expired' }, 401);
+  const block = joinGate(m);
+  if (block === 'ended') return c.json({ error: 'invalid_or_expired' }, 401);
+  if (block === 'too_early') return c.json({ error: 'too_early', startAt: m.startAt }, 409);
 
   const token = await livekitToken({
     room: m.roomName,
@@ -294,10 +345,13 @@ captionWorkerRoutes.use('*', async (c, next) => {
   return next();
 });
 
-// Активные встречи с включёнными субтитрами → список имён комнат LiveKit.
+// Идущие сейчас встречи с включёнными субтитрами → список имён комнат LiveKit.
+// ★ Запланированная встреча тоже status='active' (это «не завершена»), поэтому
+// без фильтра по времени агент полез бы в пустую комнату за неделю до планёрки и
+// держал бы GPU. Отдаём только те, в которые уже открыт вход.
 captionWorkerRoutes.get('/rooms', async (c) => {
   const rows = await db.select({ roomName: mt.roomName }).from(mt)
-    .where(and(eq(mt.status, 'active'), eq(mt.captions, true)));
+    .where(and(eq(mt.status, 'active'), eq(mt.captions, true), liveNow()));
   return c.json(rows.map((r) => r.roomName));
 });
 
@@ -331,18 +385,13 @@ livekitWebhookRoutes.post('/webhook', async (c) => {
   return c.json({ ok: true });
 });
 
-// Проверяет подпись/срок инвайта и что встреча ещё активна.
-async function resolveInvite(invite: string) {
-  let mid: string;
-  try {
-    const { payload } = await jwtVerify(invite, inviteSecret());
-    if (payload.kind !== 'meet-invite' || typeof payload.mid !== 'string') return null;
-    mid = payload.mid;
-  } catch {
-    return null;
-  }
-  const [m] = await db.select({ roomName: mt.roomName, title: mt.title, status: mt.status, captions: mt.captions })
-    .from(mt).where(eq(mt.id, mid)).limit(1);
-  if (!m || m.status !== 'active') return null;
-  return m;
+// Находит встречу по коду ссылки. Завершённую НЕ отсекает — этим занимается
+// joinGate, чтобы «встреча уже закончилась» и «начнётся в 10:00» не выглядели
+// для гостя одинаково («ссылка недействительна»).
+async function resolveInvite(code: string) {
+  const [m] = await db.select({
+    roomName: mt.roomName, title: mt.title, status: mt.status,
+    captions: mt.captions, kind: mt.kind, startAt: mt.startAt,
+  }).from(mt).where(eq(mt.inviteCode, code)).limit(1);
+  return m ?? null;
 }

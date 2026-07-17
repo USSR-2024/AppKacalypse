@@ -131,12 +131,16 @@ export interface Transcription {
 }
 
 export type MeetingStatus = "active" | "ended";
+export type MeetingKind = "instant" | "scheduled" | "permanent";
 export type RecordingStatus = "none" | "active" | "processing" | "ready" | "failed";
 
 export interface Meeting {
   id: string;
   title: string;
   status: MeetingStatus;
+  kind: MeetingKind;
+  startAt: string | null;      // только у scheduled
+  inviteUrl: string | null;    // null, если нет права звать (не owner/admin)
   captions: boolean;
   recordingStatus: RecordingStatus;
   recordingKey: string | null;

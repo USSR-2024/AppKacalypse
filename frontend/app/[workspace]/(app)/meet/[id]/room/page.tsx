@@ -67,8 +67,10 @@ export default function MeetingRoomPage() {
     return (
       <main className="flex min-h-dvh flex-col items-center justify-center gap-3 px-6 text-center">
         <div className="text-4xl">📹</div>
-        <p className="font-medium">{t.cantEnter}</p>
-        <p className="text-sm text-muted">{err === "ended" ? t.ended : t.notFound}</p>
+        <p className="font-medium">{err === "too_early" ? t.tooEarlyTitle : t.cantEnter}</p>
+        <p className="text-sm text-muted">
+          {err === "ended" ? t.ended : err === "too_early" ? t.opensBefore : t.notFound}
+        </p>
         <button onClick={leave} className="mt-2 text-sm text-accent">{t.backToList}</button>
       </main>
     );

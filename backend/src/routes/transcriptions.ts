@@ -12,6 +12,7 @@ import type { Context, Next } from 'hono';
 import { db, schema } from '../db/index.js';
 import { requireAuth } from '../lib/auth-middleware.js';
 import { requireWorkspace } from '../lib/workspace-middleware.js';
+import { liveNow } from '../lib/meeting-window.js';
 import { env } from '../lib/env.js';
 
 const tr = schema.transcriptions;
@@ -184,10 +185,16 @@ transcribeWorkerRoutes.use('*', async (c, next) => {
 
 /** Идёт ли живая встреча с субтитрами. Пока идёт — карта принадлежит им:
  *  ни расшифровка (large-v3 + диаризация), ни протокол (qwen) задач не получают.
- *  Приоритет живёт ЗДЕСЬ, а не в скриптах воркеров — иначе правило разъедется. */
+ *  Приоритет живёт ЗДЕСЬ, а не в скриптах воркеров — иначе правило разъедется.
+ *  ★ «Идёт» ≠ status='active': запланированная встреча активна с момента создания,
+ *  и без окна входа планёрка на следующей неделе застопорила бы расшифровки до себя. */
 async function captionsBusy(): Promise<boolean> {
   const [row] = await db.select({ id: schema.meetings.id }).from(schema.meetings)
-    .where(and(eq(schema.meetings.status, 'active'), eq(schema.meetings.captions, true)))
+    .where(and(
+      eq(schema.meetings.status, 'active'),
+      eq(schema.meetings.captions, true),
+      liveNow(),
+    ))
     .limit(1);
   return !!row;
 }

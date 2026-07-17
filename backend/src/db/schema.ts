@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, boolean, timestamp, jsonb, integer, pgEnum, unique, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, boolean, timestamp, jsonb, integer, pgEnum, unique, index, uniqueIndex } from 'drizzle-orm/pg-core';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Enums
@@ -410,11 +410,18 @@ export const transcriptions = pgTable('transcriptions', {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // meetings — видеовстречи (LiveKit). Комната создаётся в воркспейсе, участники
-// заходят из трекера (JWT) или по подписанной инвайт-ссылке (внешние гости).
+// заходят из трекера (JWT) или по инвайт-ссылке (внешние гости).
 // Запись (по требованию) и субтитры — опциональны, тумблерами.
-//   status: active → ended
+//   status: active → ended — это ЖИЗНЕННЫЙ ЦИКЛ («не завершена» / «завершена»),
+//   а НЕ «идёт ли прямо сейчас»: запланированная встреча тоже active, пока не
+//   завершена. Идёт ли она — считается из kind + startAt (см. joinGate в routes).
 // ─────────────────────────────────────────────────────────────────────────────
 export const meetingStatus = pgEnum('meeting_status', ['active', 'ended']);
+// Тип встречи:
+//   instant   — начата сейчас, ссылка живёт до завершения (поведение по умолчанию);
+//   scheduled — на дату/время, вход открывается за 15 минут до начала, хост не нужен;
+//   permanent — постоянная комната («планёрка»): ссылка не протухает, зашёл когда хочешь.
+export const meetingKind = pgEnum('meeting_kind', ['instant', 'scheduled', 'permanent']);
 // Статус записи встречи: none → active (egress пишет) → processing (egress завершается,
 // заливает в MinIO) → ready (mp4 в бакете, есть ключ) | failed.
 export const recordingStatus = pgEnum('recording_status', ['none', 'active', 'processing', 'ready', 'failed']);
@@ -426,6 +433,9 @@ export const meetings = pgTable('meetings', {
   title: text('title').notNull().default('Встреча'),
   roomName: text('room_name').notNull(),                 // имя комнаты LiveKit
   status: meetingStatus('status').notNull().default('active'),
+  kind: meetingKind('kind').notNull().default('instant'),
+  startAt: timestamp('start_at', { withTimezone: true }), // только у scheduled
+  inviteCode: text('invite_code'),                        // код ссылки /join/<code>; перевыпуск отзывает старую
   captions: boolean('captions').notNull().default(false),  // живые субтитры вкл/выкл
   recordingStatus: recordingStatus('recording_status').notNull().default('none'), // состояние записи
   egressId: text('egress_id'),                           // id активного/последнего LiveKit Egress
@@ -436,6 +446,7 @@ export const meetings = pgTable('meetings', {
 }, (t) => ({
   workspaceIdx: index('meetings_workspace_idx').on(t.workspaceId),
   roomUnique: unique('meetings_room_unique').on(t.roomName),
+  inviteCodeIdx: uniqueIndex('meetings_invite_code_unique').on(t.inviteCode),
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -5,12 +5,13 @@ import { MeetingRoom } from "@/components/MeetingRoom";
 import { meetStr, type MeetLang } from "@/lib/meetStrings";
 
 interface JoinInfo { url: string; token: string; title: string; captions: boolean }
+interface Preview { title: string; captions: boolean; kind: string; startAt: string | null; canJoin: boolean }
 
-// Публичный вход для внешних гостей по подписанной инвайт-ссылке. Без аккаунта.
+// Публичный вход для внешних гостей по инвайт-ссылке. Без аккаунта.
 // UI и субтитры — на выбранном языке (по умолчанию из языка браузера).
 export default function GuestJoinPage() {
   const { token: invite } = useParams<{ token: string }>();
-  const [title, setTitle] = useState<string | null>(null);
+  const [preview, setPreview] = useState<Preview | null>(null);
   const [valid, setValid] = useState<boolean | null>(null);
   const [name, setName] = useState("");
   const [lang, setLang] = useState<MeetLang>("ru");
@@ -18,20 +19,29 @@ export default function GuestJoinPage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const t = meetStr[lang];
+  const title = preview?.title ?? null;
 
   useEffect(() => {
     if (typeof navigator !== "undefined" && navigator.language.toLowerCase().startsWith("es")) setLang("es");
   }, []);
 
+  // Перепроверяем раз в 30 с: пришедший заранее увидит форму входа, как только
+  // окно откроется (за 15 мин до начала), — перезагружать страницу не нужно.
   useEffect(() => {
-    fetch("/api/join/preview", {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ invite }),
-    })
-      .then(async (r) => {
-        if (r.ok) { const d = await r.json(); setTitle(d.title); setValid(true); }
-        else setValid(false);
+    let alive = true;
+    const load = () =>
+      fetch("/api/join/preview", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ invite }),
       })
-      .catch(() => setValid(false));
+        .then(async (r) => {
+          if (!alive) return;
+          if (r.ok) { setPreview((await r.json()) as Preview); setValid(true); }
+          else setValid(false);
+        })
+        .catch(() => alive && setValid(false));
+    load();
+    const id = setInterval(load, 30_000);
+    return () => { alive = false; clearInterval(id); };
   }, [invite]);
 
   async function join() {
@@ -69,6 +79,20 @@ export default function GuestJoinPage() {
             <div className="text-4xl">🔗</div>
             <p className="mt-2 font-medium">{t.invalidLink}</p>
             <p className="mt-1 text-sm text-muted">{t.askNew}</p>
+          </div>
+        ) : preview && !preview.canJoin ? (
+          <div className="text-center">
+            <div className="text-4xl">🕒</div>
+            <p className="mt-2 font-medium">{preview.title}</p>
+            <p className="mt-1 text-sm">{t.tooEarlyTitle}</p>
+            {preview.startAt && (
+              <p className="mt-2 text-lg font-semibold text-accent">
+                {new Date(preview.startAt).toLocaleString(lang === "es" ? "es-ES" : "ru-RU", {
+                  weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit",
+                })}
+              </p>
+            )}
+            <p className="mt-3 text-sm text-muted">{t.tooEarlyHint}</p>
           </div>
         ) : (
           <>
