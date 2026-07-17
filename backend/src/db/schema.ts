@@ -602,6 +602,10 @@ export const approvalMatrix = pgTable('approval_matrix', {
 
 // ── Карточка документа ───────────────────────────────────────────────────────
 
+// Приоритет документа — 4 уровня. У задач трекера своя шкала (low/normal/high):
+// это ДРУГАЯ сущность, смешивать нельзя. Критический требует обоснования.
+export const docPriority = pgEnum('doc_priority', ['critical', 'urgent', 'important', 'low']);
+
 export const documents = pgTable('documents', {
   id: uuid('id').primaryKey().defaultRandom(),
   workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
@@ -609,6 +613,10 @@ export const documents = pgTable('documents', {
   // создании черновика: брошенные черновики выжгли бы дыры в нумерации.
   registryNumber: text('registry_number'),
   title: text('title').notNull(),
+  description: text('description'),
+  priority: docPriority('priority').notNull().default('important'),
+  priorityReason: text('priority_reason'),        // обязателен при critical
+  dueAt: timestamp('due_at', { withTimezone: true }),
   typeId: uuid('type_id').notNull().references(() => docTypes.id, { onDelete: 'restrict' }),
   groupId: uuid('group_id').references(() => docGroups.id, { onDelete: 'set null' }),
   status: documentStatus('status').notNull().default('draft'),

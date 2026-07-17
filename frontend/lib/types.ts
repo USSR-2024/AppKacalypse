@@ -165,3 +165,66 @@ export interface Me {
   eveningTime: string;
   notifyChannels: string[];
 }
+
+// ── Документы (модуль ДМС) ───────────────────────────────────────────────────
+export type DocumentStatus =
+  | "draft" | "on_approval" | "rework" | "approved" | "on_signing"
+  | "signed" | "active" | "expired" | "terminated" | "archived" | "cancelled";
+export type DocPriority = "critical" | "urgent" | "important" | "low";
+
+export interface DocVersion {
+  id: string;
+  versionNo: number;
+  fileName: string;
+  fileSize: number;
+  fileHash: string;
+  mimeType: string;
+  comment: string | null;
+  isSignedOriginal: boolean;
+  createdAt: string;
+  authorName: string | null;
+}
+
+export interface DocRow {
+  id: string;
+  registryNumber: string | null;
+  title: string;
+  status: DocumentStatus;
+  priority: DocPriority;
+  dueAt: string | null;
+  counterpartyName: string | null;
+  typeName: string | null;
+  groupName: string | null;
+  ownerName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DocCard extends DocRow {
+  description: string | null;
+  priorityReason: string | null;
+  typeId: string;
+  groupId: string | null;
+  currentVersionId: string | null;
+  amount: string | null;
+  currency: string | null;
+  versions: DocVersion[];
+  canEdit: boolean;
+  canManage: boolean;
+}
+
+export interface DocType {
+  id: string;
+  name: string;
+  code: string;
+  requiresNote: boolean;
+}
+
+export interface DocActivity {
+  id: string;
+  entity: string;
+  action: string;
+  payload: Record<string, unknown>;
+  at: string;
+  actorName: string | null;
+}

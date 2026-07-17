@@ -34,6 +34,8 @@ const schema = z.object({
   S3_ENDPOINT: z.string().default('http://minio:9000'),
   S3_REGION: z.string().default('us-east-1'),
   S3_BUCKET: z.string().default('recordings'),
+  // Отдельный бакет документов: у него Object Lock (включается только при создании).
+  S3_DOCS_BUCKET: z.string().default('documents'),
   S3_ACCESS_KEY: z.string().default(''),
   S3_SECRET_KEY: z.string().default(''),
   // Endpoint MinIO, который передаётся ВНУТРЬ egress-запроса (egress host-net → 127.0.0.1:9000).

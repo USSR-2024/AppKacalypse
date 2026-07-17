@@ -18,6 +18,7 @@ const NAV = [
   { href: "/projects", label: "Проекты", icon: "📁" },
   { href: "/calendar", label: "Календарь", icon: "🗓" },
   { href: "/meet", label: "Встречи", icon: "📹" },
+  { href: "/docs", label: "Документы", icon: "📄" },
   { href: "/team", label: "Команда", icon: "👥" },
 ];
 

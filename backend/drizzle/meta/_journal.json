@@ -134,6 +134,13 @@
       "when": 1784908000000,
       "tag": "0018_dms_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1784910000000,
+      "tag": "0019_dms_card_fields",
+      "breakpoints": true
     }
   ]
 }

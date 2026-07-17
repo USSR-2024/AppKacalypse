@@ -18,6 +18,7 @@ import { broadcastRoutes } from './routes/broadcast.js';
 import { workspaceRoutes, ownerRoutes, memberRoutes } from './routes/workspaces.js';
 import { transcriptionRoutes, transcribeWorkerRoutes } from './routes/transcriptions.js';
 import { meetingRoutes, meetingGuestRoutes, captionWorkerRoutes, livekitWebhookRoutes } from './routes/meetings.js';
+import { documentRoutes } from './routes/documents.js';
 import { startScheduler } from './lib/scheduler.js';
 
 const app = new Hono();
@@ -33,6 +34,7 @@ app.route('/api/projects', projectRoutes);
 app.route('/api/teams', teamRoutes);
 app.route('/api/users', userRoutes);
 app.route('/api/assistant', assistantRoutes);
+app.route('/api/documents', documentRoutes);
 app.route('/api/telegram', telegramRoutes);
 app.route('/api/push', pushRoutes);
 app.route('/api/broadcast', broadcastRoutes);
