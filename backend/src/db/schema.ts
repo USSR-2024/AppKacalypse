@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, boolean, timestamp, jsonb, integer, pgEnum, unique, index, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, boolean, timestamp, jsonb, integer, numeric, date, pgEnum, unique, index, uniqueIndex, primaryKey } from 'drizzle-orm/pg-core';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Enums
@@ -462,4 +462,326 @@ export const pushSubscriptions = pgTable('push_subscriptions', {
 }, (t) => ({
   endpointUnique: unique('push_endpoint_unique').on(t.endpoint),
   userIdx: index('push_subscriptions_user_idx').on(t.userId),
+}));
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ДОКУМЕНТООБОРОТ («Документы»). Спека — docs/ТЗ-документооборот.md, порядок работ
+// и границы первого захода — docs/ПЛАН-документооборот.md.
+//
+// Отличия от SQL в ТЗ (оно писалось под другой стек — это НЕ отсебятина):
+//   • BIGSERIAL → uuid: users.id здесь uuid, сквозные BIGINT-ключи бы не сошлись;
+//   • отдельная схема `docs` → префикс doc_/route_ в public: остальной трекер живёт так же;
+//   • + workspace_id ВЕЗДЕ с первого дня (в ТЗ его нет вовсе — оно single-tenant).
+//     Дописывать его в 14 таблиц потом — дороже, чем завести сразу.
+//   • справочника контрагентов НЕТ (за границами первого захода) → на карточке
+//     свободное текстовое поле counterparty_name: реестр по нему ищет, справочник не нужен.
+//
+// Центральная сущность — КАРТОЧКА документа, файл = её свойство. Задачи трекера
+// (tasks) намеренно не переиспользуются: домен свой, иначе тащим шрамы трекерной модели.
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Жизненный цикл карточки (ТЗ §2.1). ЭДО/ЭЦП вычеркнуты: подписание бумажное,
+// в систему кладётся скан/PDF подписанного оригинала.
+export const documentStatus = pgEnum('document_status', [
+  'draft',        // черновик — правит инициатор
+  'on_approval',  // идёт согласование по маршруту
+  'rework',       // вернули на корректировку (есть блокирующее замечание)
+  'approved',     // все обязательные согласовали
+  'on_signing',   // у ГД на утверждении
+  'signed',       // подписан, загружен оригинал
+  'active',       // действует
+  'expired',      // срок действия истёк
+  'terminated',   // расторгнут
+  'archived',     // сдан в архив (soft-delete: файлы не удаляем)
+  'cancelled',    // отменён до подписания
+]);
+
+// ── Справочники ──────────────────────────────────────────────────────────────
+
+// Группа документов — «чьи это». 7 категорий из приёмочного теста (кадровые,
+// договорные, финансовые…). Дерево: parent_id. Редактируются в админке.
+export const docGroups = pgTable('doc_groups', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  parentId: uuid('parent_id'),                            // self-FK ставится в SQL миграции
+  code: text('code').notNull(),
+  name: text('name').notNull(),
+  sortOrder: integer('sort_order').notNull().default(0),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  wsIdx: index('doc_groups_ws_idx').on(t.workspaceId),
+  codeUnique: unique('doc_groups_ws_code_unique').on(t.workspaceId, t.code),
+}));
+
+// Тип документа (договор, допсоглашение, приём сотрудника…). Именно тип решает,
+// КТО согласует (через матрицу), нужна ли пояснительная записка и какой SLA.
+export const docTypes = pgTable('doc_types', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  groupId: uuid('group_id').references(() => docGroups.id, { onDelete: 'restrict' }),
+  code: text('code').notNull(),
+  name: text('name').notNull(),
+  registryMask: text('registry_mask').notNull().default('{TYPE}-{YYYY}-{NNNN}'),  // ТЗ §3.2
+  requiresNote: boolean('requires_note').notNull().default(false),   // нужна пояснительная записка
+  noteProfileId: uuid('note_profile_id'),                            // FK в SQL (циклическая ссылка)
+  slaDays: integer('sla_days').notNull().default(3),                 // срок согласования, рабочих дней
+  riskLevel: text('risk_level'),                                     // термин из регламента; смысл пока не определён
+  requiresCounterparty: boolean('requires_counterparty').notNull().default(false),
+  requiresValidity: boolean('requires_validity').notNull().default(false),
+  attrSchema: jsonb('attr_schema').notNull().default({}),            // JSON Schema доп. атрибутов
+  templateObjectKey: text('template_object_key'),                    // шаблон .docx в MinIO
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  wsIdx: index('doc_types_ws_idx').on(t.workspaceId),
+  codeUnique: unique('doc_types_ws_code_unique').on(t.workspaceId, t.code),
+}));
+
+// Счётчик реестровых номеров. Отдельная таблица РАДИ АТОМАРНОСТИ: номер выдаётся
+// через INSERT ... ON CONFLICT DO UPDATE ... RETURNING, а не SELECT MAX()+1 (гонка → дубли).
+export const docRegistryCounters = pgTable('doc_registry_counters', {
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  typeId: uuid('type_id').notNull().references(() => docTypes.id, { onDelete: 'cascade' }),
+  periodKey: text('period_key').notNull(),        // '2026' | '2026-07' — зависит от маски
+  lastValue: integer('last_value').notNull().default(0),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.workspaceId, t.typeId, t.periodKey] }),
+}));
+
+// ── Функциональные группы (кто согласует) ────────────────────────────────────
+
+// Юристы, Финансы, СБ, HR… Матрица зовёт ГРУППУ, а не человека: иначе увольнение
+// одного юриста ломает все маршруты. Это НЕ права доступа — измерения ортогональны.
+export const orgUnits = pgTable('org_units', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  code: text('code').notNull(),
+  name: text('name').notNull(),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  wsIdx: index('org_units_ws_idx').on(t.workspaceId),
+  codeUnique: unique('org_units_ws_code_unique').on(t.workspaceId, t.code),
+}));
+
+// Роль в группе: lead визирует по умолчанию, deputy подставляется при отсутствии.
+export const orgUnitRole = pgEnum('org_unit_role', ['lead', 'member', 'deputy']);
+
+export const orgUnitMembers = pgTable('org_unit_members', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  unitId: uuid('unit_id').notNull().references(() => orgUnits.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  role: orgUnitRole('role').notNull().default('member'),
+  canApprove: boolean('can_approve').notNull().default(false),  // может визировать ЗА группу
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  unitIdx: index('org_unit_members_unit_idx').on(t.unitId),
+  userIdx: index('org_unit_members_user_idx').on(t.userId),
+  memberUnique: unique('org_unit_members_unique').on(t.unitId, t.userId),
+}));
+
+// ── Матрица согласований ─────────────────────────────────────────────────────
+
+// Тип документа → обязательные группы. ЭТО ДАННЫЕ, редактируемые в админке:
+// требование владельца — «редактировать и не лезть в код». Приёмочный тест —
+// собрать матрицу АО «Холдинг» целиком через UI (план, фаза 8).
+export const approvalMatrix = pgTable('approval_matrix', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  typeId: uuid('type_id').notNull().references(() => docTypes.id, { onDelete: 'cascade' }),
+  unitId: uuid('unit_id').notNull().references(() => orgUnits.id, { onDelete: 'restrict' }),
+  stageNo: integer('stage_no').notNull().default(1),   // шаги одной стадии идут ПАРАЛЛЕЛЬНО
+  isRequired: boolean('is_required').notNull().default(true),  // обязательного убрать нельзя
+  slaDays: integer('sla_days'),                        // null = берём из типа
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  typeIdx: index('approval_matrix_type_idx').on(t.typeId),
+  rowUnique: unique('approval_matrix_unique').on(t.typeId, t.unitId, t.stageNo),
+}));
+
+// ── Карточка документа ───────────────────────────────────────────────────────
+
+export const documents = pgTable('documents', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  // Присваивается ОДИН РАЗ при уходе на согласование и больше не меняется. Не при
+  // создании черновика: брошенные черновики выжгли бы дыры в нумерации.
+  registryNumber: text('registry_number'),
+  title: text('title').notNull(),
+  typeId: uuid('type_id').notNull().references(() => docTypes.id, { onDelete: 'restrict' }),
+  groupId: uuid('group_id').references(() => docGroups.id, { onDelete: 'set null' }),
+  status: documentStatus('status').notNull().default('draft'),
+
+  authorId: uuid('author_id').notNull().references(() => users.id),
+  ownerId: uuid('owner_id').notNull().references(() => users.id),   // ответственный за карточку
+
+  // Контрагент строкой: справочник реквизитов — за границами первого захода,
+  // но реестру нужен поиск по контрагенту (план, фаза 6).
+  counterpartyName: text('counterparty_name'),
+
+  dateSigned: date('date_signed'),
+  effectiveFrom: date('effective_from'),
+  effectiveTo: date('effective_to'),                               // null = бессрочный
+  isPerpetual: boolean('is_perpetual').notNull().default(false),
+
+  amount: numeric('amount', { precision: 18, scale: 2 }),
+  currency: text('currency'),
+
+  currentVersionId: uuid('current_version_id'),                    // FK в SQL: циклическая ссылка
+  signedVersionId: uuid('signed_version_id'),
+
+  storageLocation: text('storage_location'),                       // где лежит бумажный оригинал
+  attrs: jsonb('attrs').notNull().default({}),                     // доп. атрибуты по attr_schema типа
+  taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'set null' }),  // связь с задачей трекера
+
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  wsIdx: index('documents_ws_idx').on(t.workspaceId),
+  statusIdx: index('documents_status_idx').on(t.workspaceId, t.status),
+  ownerIdx: index('documents_owner_idx').on(t.ownerId),
+  typeIdx: index('documents_type_idx').on(t.typeId, t.groupId),
+  numberUnique: unique('documents_registry_number_unique').on(t.workspaceId, t.registryNumber),
+}));
+
+// Версия = сущность, а не «файл в комментарии». Файл — свойство версии.
+export const documentVersions = pgTable('document_versions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  documentId: uuid('document_id').notNull().references(() => documents.id, { onDelete: 'cascade' }),
+  versionNo: integer('version_no').notNull(),
+  objectKey: text('object_key').notNull(),      // ключ в MinIO; НЕИЗМЕНЯЕМ (переименование правит fileName)
+  fileName: text('file_name').notNull(),
+  fileSize: integer('file_size').notNull(),
+  fileHash: text('file_hash').notNull(),        // sha256
+  mimeType: text('mime_type').notNull(),
+  authorId: uuid('author_id').notNull().references(() => users.id),
+  comment: text('comment'),
+
+  // ── Поля под ONLYOFFICE Document Server ──────────────────────────────────
+  // Зарезервированы СРАЗУ, хотя DS ещё не решён (план, вопрос 2). Стоят ноль, а
+  // задним числом не восстанавливаются: ТЗ §4.6 — не сохранишь changes с первого
+  // дня, подсветки правок не будет НИКОГДА (DS отдаёт их один раз, в callback).
+  dsKey: text('ds_key'),                        // d{id}_v{n}_{hash16} — хэш в ключе решает инвалидацию кэша
+  changesObjectKey: text('changes_object_key'), // changes.zip от DS
+  changesHistory: jsonb('changes_history'),     // объект history из callback
+  dsServerVersion: text('ds_server_version'),
+
+  isSignedOriginal: boolean('is_signed_original').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  docIdx: index('document_versions_doc_idx').on(t.documentId),
+  versionUnique: unique('document_versions_no_unique').on(t.documentId, t.versionNo),
+}));
+
+// ── Маршрут согласования ─────────────────────────────────────────────────────
+
+export const routeStatus = pgEnum('route_status', ['running', 'approved', 'rejected', 'cancelled']);
+
+export const routeInstances = pgTable('route_instances', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  documentId: uuid('document_id').notNull().references(() => documents.id, { onDelete: 'cascade' }),
+  // СНИМОК матрицы на момент запуска: правка матрицы не должна ломать идущие согласования.
+  definition: jsonb('definition').notNull(),
+  status: routeStatus('status').notNull().default('running'),
+  currentStage: integer('current_stage').notNull().default(1),
+  iteration: integer('iteration').notNull().default(1),   // номер круга (после корректировки +1)
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+}, (t) => ({
+  docIdx: index('route_instances_doc_idx').on(t.documentId, t.iteration),
+}));
+
+export const stepStatus = pgEnum('step_status', ['pending', 'active', 'approved', 'rejected', 'skipped']);
+
+export const routeSteps = pgTable('route_steps', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  routeInstanceId: uuid('route_instance_id').notNull().references(() => routeInstances.id, { onDelete: 'cascade' }),
+  unitId: uuid('unit_id').references(() => orgUnits.id, { onDelete: 'set null' }),  // от какой группы шаг
+  assigneeId: uuid('assignee_id').references(() => users.id),                       // разрезолвленный человек
+  stageNo: integer('stage_no').notNull(),        // шаги одной стадии идут параллельно
+  isRequired: boolean('is_required').notNull().default(true),
+  status: stepStatus('status').notNull().default('pending'),
+  // ★ Ключевое поле: без него нельзя ответить «изменился ли документ ПОСЛЕ того,
+  // как Иванов согласовал» → невозможна политика повторного согласования по затронутым.
+  decidedVersionId: uuid('decided_version_id').references(() => documentVersions.id, { onDelete: 'set null' }),
+  isAdHoc: boolean('is_ad_hoc').notNull().default(false),   // добавлен инициатором сверх матрицы
+  addedBy: uuid('added_by').references(() => users.id),
+  dueAt: timestamp('due_at', { withTimezone: true }),
+  activatedAt: timestamp('activated_at', { withTimezone: true }),
+  decidedAt: timestamp('decided_at', { withTimezone: true }),
+}, (t) => ({
+  routeIdx: index('route_steps_route_idx').on(t.routeInstanceId, t.stageNo),
+  assigneeIdx: index('route_steps_assignee_idx').on(t.assigneeId, t.status),
+}));
+
+// ★ Замечание БЛОКИРУЕТ, комментарий НЕ блокирует и уходит в лист разногласий.
+// Разные последствия ⇒ разные сущности и две разные кнопки в UI, а не одно поле «текст».
+export const remarkKind = pgEnum('remark_kind', ['blocking', 'comment']);
+
+export const stepRemarks = pgTable('step_remarks', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  stepId: uuid('step_id').notNull().references(() => routeSteps.id, { onDelete: 'cascade' }),
+  documentId: uuid('document_id').notNull().references(() => documents.id, { onDelete: 'cascade' }),
+  authorId: uuid('author_id').notNull().references(() => users.id),
+  kind: remarkKind('kind').notNull(),
+  text: text('text').notNull(),
+  versionId: uuid('version_id').references(() => documentVersions.id, { onDelete: 'set null' }), // к какой версии
+  // Ответ инициатора: учтено/не учтено + обоснование → из этого генерится лист разногласий.
+  resolution: text('resolution'),
+  isAccepted: boolean('is_accepted'),
+  resolvedBy: uuid('resolved_by').references(() => users.id),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  docIdx: index('step_remarks_doc_idx').on(t.documentId),
+  stepIdx: index('step_remarks_step_idx').on(t.stepId),
+}));
+
+// ── Пояснительная записка ────────────────────────────────────────────────────
+
+// Профиль = набор полей записки ДЛЯ КОНКРЕТНОГО типа документа. Без профилей в
+// 12 полях из 15 будет «н/д»: записка к закупке ИТ и к приёму сотрудника — разные.
+export const noteProfiles = pgTable('note_profiles', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  code: text('code').notNull(),
+  name: text('name').notNull(),
+  fields: jsonb('fields').notNull().default([]),   // [{key,label,type,required,hint}]
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  codeUnique: unique('note_profiles_ws_code_unique').on(t.workspaceId, t.code),
+}));
+
+// Записка — СТРУКТУРИРОВАННАЯ ФОРМА, а не приложенный вордовый файл.
+export const explanatoryNotes = pgTable('explanatory_notes', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  documentId: uuid('document_id').notNull().references(() => documents.id, { onDelete: 'cascade' }),
+  profileId: uuid('profile_id').references(() => noteProfiles.id, { onDelete: 'set null' }),
+  values: jsonb('values').notNull().default({}),   // {ключ поля: значение}
+  authorId: uuid('author_id').notNull().references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  docUnique: unique('explanatory_notes_doc_unique').on(t.documentId),
+}));
+
+// ── Аудит ────────────────────────────────────────────────────────────────────
+
+// Единственный источник правды на вопрос «что вообще происходило с документом».
+// Пишется на ВСЕ смены статуса, сохранения версий, решения по шагам, правки справочников.
+// Записи неизменяемы: не редактировать и не удалять (ТЗ §3.7).
+export const documentActivity = pgTable('document_activity', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  documentId: uuid('document_id').references(() => documents.id, { onDelete: 'cascade' }),
+  entity: text('entity').notNull(),          // document | version | route_step | doc_type | org_unit | matrix
+  entityId: uuid('entity_id'),
+  actorId: uuid('actor_id').references(() => users.id),
+  action: text('action').notNull(),          // created | status_changed | version_saved | approved | ...
+  payload: jsonb('payload').notNull().default({}),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  docIdx: index('document_activity_doc_idx').on(t.documentId, t.at),
+  wsIdx: index('document_activity_ws_idx').on(t.workspaceId, t.at),
 }));
