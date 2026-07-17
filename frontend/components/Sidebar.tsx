@@ -23,7 +23,12 @@ const NAV = [
 
 const ROLE_LABEL: Record<string, string> = { owner: "Владелец", admin: "Глава", member: "Участник" };
 
-/** Десктопный сайдбар (≥lg). На мобиле скрыт — там нижний таб-бар. */
+/** Десктопный сайдбар (≥lg). На мобиле скрыт — там нижний таб-бар.
+ *
+ *  ★ Высота — РОВНО экран (h-dvh) + sticky. Без этого панель — flex-item в строке с
+ *  контентом и растягивается на высоту ДОКУМЕНТА: на длинной странице низ (тема,
+ *  карточка профиля) уезжает вниз, и до него надо доскроллить. Список пунктов
+ *  прокручивается внутри себя (nav flex-1 overflow-y-auto), низ приколот к экрану. */
 export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
   const router = useRouter();
   const path = usePathname();
@@ -37,7 +42,7 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
   const isOwner = me?.role === "owner";
 
   return (
-    <aside className="hidden w-[260px] shrink-0 flex-col border-r border-border bg-surface lg:flex">
+    <aside className="sticky top-0 hidden h-dvh w-[260px] shrink-0 flex-col border-r border-border bg-surface lg:flex">
       {/* Шапка: переключатель пространства */}
       <div className="relative border-b border-border p-3">
         <button
