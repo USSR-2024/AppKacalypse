@@ -305,6 +305,10 @@ meetingGuestRoutes.post('/preview', async (c) => {
   return c.json({
     title: m.title, captions: m.captions, kind: m.kind, startAt: m.startAt,
     canJoin: joinGate(m) === null,
+    // Часовой пояс организатора — для карточки-превью в мессенджере. Её рисует сервер
+    // один раз на всех, часовой пояс читающего там неизвестен; сама страница показывает
+    // время уже по местному времени гостя.
+    timezone: m.timezone,
   });
 });
 
@@ -392,6 +396,11 @@ async function resolveInvite(code: string) {
   const [m] = await db.select({
     roomName: mt.roomName, title: mt.title, status: mt.status,
     captions: mt.captions, kind: mt.kind, startAt: mt.startAt,
-  }).from(mt).where(eq(mt.inviteCode, code)).limit(1);
+    timezone: schema.users.timezone,   // часовой пояс организатора — для превью ссылки
+  })
+    .from(mt)
+    .leftJoin(schema.users, eq(schema.users.id, mt.createdBy))
+    .where(eq(mt.inviteCode, code))
+    .limit(1);
   return m ?? null;
 }

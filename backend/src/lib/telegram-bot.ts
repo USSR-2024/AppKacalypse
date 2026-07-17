@@ -268,7 +268,7 @@ export async function processUpdate(update: TgUpdate): Promise<void> {
   if (text === BTN.open) {
     const link = await createLoginLink(user.id);
     await sendMessage(chatId, "Открой приложение — вход уже подтверждён 👇", {
-      inline_keyboard: [[{ text: "Открыть AppKacalypse", url: link }]],
+      inline_keyboard: [[{ text: "Открыть appka.space", url: link }]],
     });
     return;
   }

@@ -20,7 +20,7 @@ const schema = z.object({
   ALLOW_DEV_AUTH: z.string().default('0'),
   // Почта (Resend). Домен appka.space верифицирован; ключ — только в backend/.env на 158.
   RESEND_API_KEY: z.string().default(''),
-  MAIL_FROM: z.string().default('AppKacalypse <no-reply@appka.space>'),
+  MAIL_FROM: z.string().default('appka.space <no-reply@appka.space>'),
   // Расшифровки встреч: общий том с хостовым воркером + токен воркера.
   TRANSCRIBE_DATA_DIR: z.string().default('/data'),
   WORKER_TOKEN: z.string().default(''),

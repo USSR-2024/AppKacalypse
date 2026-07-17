@@ -13,7 +13,7 @@ const ROLE_TEXT: Record<string, string> = {
 };
 
 /**
- * Публичная страница приглашения (без входа). Регистрация в AppKacalypse только
+ * Публичная страница приглашения (без входа). Регистрация в appka.space только
  * по такой ссылке: человек вводит почту, получает код — и сразу оказывается в
  * пространстве с той ролью, которая записана в приглашении.
  */
@@ -43,7 +43,7 @@ export default function InvitePage() {
         <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-3xl bg-accent text-3xl font-bold text-white">
           A
         </div>
-        <h1 className="text-2xl font-semibold">AppKacalypse</h1>
+        <h1 className="text-2xl font-semibold">appka.space</h1>
       </div>
 
       <div className="flex w-full max-w-xs flex-col items-center gap-4">

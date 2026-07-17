@@ -102,7 +102,7 @@ export default function LoginPage() {
         <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-3xl bg-accent text-3xl font-bold text-white">
           A
         </div>
-        <h1 className="text-2xl font-semibold">AppKacalypse</h1>
+        <h1 className="text-2xl font-semibold">appka.space</h1>
         <p className="mt-1 text-muted">AI-диспетчер задач</p>
       </div>
 

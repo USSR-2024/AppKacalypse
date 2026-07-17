@@ -1,132 +1,84 @@
-"use client";
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
-import { MeetingRoom } from "@/components/MeetingRoom";
-import { meetStr, type MeetLang } from "@/lib/meetStrings";
+import type { Metadata } from "next";
+import { GuestJoin } from "./GuestJoin";
 
-interface JoinInfo { url: string; token: string; title: string; captions: boolean }
-interface Preview { title: string; captions: boolean; kind: string; startAt: string | null; canJoin: boolean }
+// Серверная обёртка страницы приглашения. Нужна ровно ради карточки-превью в
+// мессенджере: её рисует бот, который JS не выполняет, поэтому og-теги должны
+// быть в HTML. Раньше их не было вовсе — Telegram брал <title> и показывал
+// старое имя проекта вместо названия встречи.
+//
+// Сам вход — в клиентском GuestJoin (микрофон, камера, LiveKit).
 
-// Публичный вход для внешних гостей по инвайт-ссылке. Без аккаунта.
-// UI и субтитры — на выбранном языке (по умолчанию из языка браузера).
+interface Preview {
+  title: string;
+  kind: string;
+  startAt: string | null;
+  timezone: string | null;
+}
+
+const BACKEND = process.env.BACKEND_URL || "http://localhost:8081";
+
+async function fetchPreview(code: string): Promise<Preview | null> {
+  try {
+    const r = await fetch(`${BACKEND}/api/join/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ invite: code }),
+      cache: "no-store",
+    });
+    return r.ok ? ((await r.json()) as Preview) : null;
+  } catch {
+    return null;   // бэк недоступен — отдадим нейтральную карточку, страница всё равно откроется
+  }
+}
+
+// «24 июля, 10:00 (GMT+3)» в часовом поясе организатора. Пояс подписан явно:
+// карточку мессенджер рисует один раз на всех, и читать её может участник из
+// другого пояса — без метки время выглядело бы уверенно и неверно.
+function formatStart(startAt: string, timezone: string | null): string {
+  const tz = timezone || "Europe/Moscow";
+  try {
+    return new Intl.DateTimeFormat("ru-RU", {
+      day: "numeric", month: "long", hour: "2-digit", minute: "2-digit",
+      timeZone: tz, timeZoneName: "shortOffset",
+    }).format(new Date(startAt));
+  } catch {
+    return new Date(startAt).toLocaleString("ru-RU");
+  }
+}
+
+export async function generateMetadata({ params }: { params: Promise<{ token: string }> }): Promise<Metadata> {
+  const { token } = await params;
+  const m = await fetchPreview(token);
+
+  if (!m) {
+    return {
+      title: "Приглашение недействительно",
+      description: "Ссылка на встречу истекла или встреча уже завершена.",
+      robots: { index: false, follow: false },
+    };
+  }
+
+  const when =
+    m.kind === "scheduled" && m.startAt ? `${formatStart(m.startAt, m.timezone)} · ` :
+    m.kind === "permanent" ? "Постоянная комната · " : "";
+  const description = `Видеовстреча · ${when}appka.space`;
+
+  return {
+    title: m.title,
+    description,
+    // Ссылку на встречу не должны индексировать: она сама по себе пропуск внутрь.
+    robots: { index: false, follow: false },
+    openGraph: {
+      title: m.title,
+      description,
+      siteName: "appka.space",
+      type: "website",
+      images: [{ url: "/icon-512.png", width: 512, height: 512, alt: "appka.space" }],
+    },
+    twitter: { card: "summary", title: m.title, description },
+  };
+}
+
 export default function GuestJoinPage() {
-  const { token: invite } = useParams<{ token: string }>();
-  const [preview, setPreview] = useState<Preview | null>(null);
-  const [valid, setValid] = useState<boolean | null>(null);
-  const [name, setName] = useState("");
-  const [lang, setLang] = useState<MeetLang>("ru");
-  const [info, setInfo] = useState<JoinInfo | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const t = meetStr[lang];
-  const title = preview?.title ?? null;
-
-  useEffect(() => {
-    if (typeof navigator !== "undefined" && navigator.language.toLowerCase().startsWith("es")) setLang("es");
-  }, []);
-
-  // Перепроверяем раз в 30 с: пришедший заранее увидит форму входа, как только
-  // окно откроется (за 15 мин до начала), — перезагружать страницу не нужно.
-  useEffect(() => {
-    let alive = true;
-    const load = () =>
-      fetch("/api/join/preview", {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ invite }),
-      })
-        .then(async (r) => {
-          if (!alive) return;
-          if (r.ok) { setPreview((await r.json()) as Preview); setValid(true); }
-          else setValid(false);
-        })
-        .catch(() => alive && setValid(false));
-    load();
-    const id = setInterval(load, 30_000);
-    return () => { alive = false; clearInterval(id); };
-  }, [invite]);
-
-  async function join() {
-    if (!name.trim() || busy) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await fetch("/api/join/token", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ invite, name: name.trim(), lang }),
-      });
-      if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error || "error");
-      setInfo((await r.json()) as JoinInfo);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "error");
-      setBusy(false);
-    }
-  }
-
-  if (info) {
-    return (
-      <MeetingRoom
-        url={info.url} token={info.token} title={info.title}
-        viewerLang={lang} initialCaptions={info.captions}
-        onLeave={() => { setInfo(null); setBusy(false); }}
-      />
-    );
-  }
-
-  return (
-    <main className="flex min-h-dvh flex-col items-center justify-center px-6">
-      <div className="w-full max-w-sm rounded-2xl bg-surface p-6">
-        {valid === false ? (
-          <div className="text-center">
-            <div className="text-4xl">🔗</div>
-            <p className="mt-2 font-medium">{t.invalidLink}</p>
-            <p className="mt-1 text-sm text-muted">{t.askNew}</p>
-          </div>
-        ) : preview && !preview.canJoin ? (
-          <div className="text-center">
-            <div className="text-4xl">🕒</div>
-            <p className="mt-2 font-medium">{preview.title}</p>
-            <p className="mt-1 text-sm">{t.tooEarlyTitle}</p>
-            {preview.startAt && (
-              <p className="mt-2 text-lg font-semibold text-accent">
-                {new Date(preview.startAt).toLocaleString(lang === "es" ? "es-ES" : "ru-RU", {
-                  weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit",
-                })}
-              </p>
-            )}
-            <p className="mt-3 text-sm text-muted">{t.tooEarlyHint}</p>
-          </div>
-        ) : (
-          <>
-            <h1 className="text-xl font-semibold">{title ?? t.connectTitle}</h1>
-            <p className="mt-1 text-sm text-muted">{t.enterName}</p>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && join()}
-              placeholder={t.yourName}
-              className="mt-4 w-full rounded-xl bg-surface-2 px-3 py-2.5 text-sm outline-none"
-            />
-            <div className="mt-3">
-              <label className="text-xs text-muted">{t.subLang}</label>
-              <select
-                value={lang}
-                onChange={(e) => setLang(e.target.value as MeetLang)}
-                className="mt-1 w-full rounded-xl bg-surface-2 px-3 py-2.5 text-sm outline-none"
-              >
-                <option value="ru">Русский</option>
-                <option value="es">Español</option>
-              </select>
-            </div>
-            <button
-              onClick={join}
-              disabled={busy || !name.trim()}
-              className="mt-4 w-full rounded-xl bg-accent px-4 py-2.5 text-sm font-medium text-white disabled:opacity-40"
-            >
-              {busy ? t.connecting : t.join}
-            </button>
-            {err && <p className="mt-2 text-sm text-danger">{err}</p>}
-          </>
-        )}
-      </div>
-    </main>
-  );
+  return <GuestJoin />;
 }

@@ -37,6 +37,10 @@ services:
     image: akc-frontend
     container_name: akc-frontend
     restart: unless-stopped
+    environment:
+      # Серверный рендер карточки-превью для /join/<code> ходит в бэк по сети docker.
+      # В браузер это не попадает: /api/* снаружи забирает Caddy, Next в проде не участвует.
+      BACKEND_URL: http://backend:8081
     networks: [default]
 
 networks:

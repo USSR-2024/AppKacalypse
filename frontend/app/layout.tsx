@@ -2,13 +2,21 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AppKacalypse",
-  description: "AI-диспетчер задач",
+  // metadataBase обязателен: без него относительный og:image остаётся относительным,
+  // а мессенджеру нужен абсолютный URL — картинка в карточке просто не появится.
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "https://appka.space"),
+  title: "appka.space",
+  description: "Задачи, встречи и расшифровки в одном месте",
   manifest: "/manifest.webmanifest",
-  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "AppKacalypse" },
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "appka.space" },
   icons: {
     icon: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }],
     apple: "/apple-touch-icon.png",
+  },
+  openGraph: {
+    siteName: "appka.space",
+    type: "website",
+    images: [{ url: "/icon-512.png", width: 512, height: 512, alt: "appka.space" }],
   },
 };
 
