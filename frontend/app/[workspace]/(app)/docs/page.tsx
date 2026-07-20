@@ -28,11 +28,17 @@ export default function DocsPage() {
 
   return (
     <main className="px-4 pt-12">
-      <header className="mb-5">
-        <h1 className="text-2xl font-semibold">Документы</h1>
-        <p className="mt-1 text-sm text-muted">
-          Карточка документа: файл, версии, согласование, история. Реестр по категориям.
-        </p>
+      <header className="mb-5 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">Документы</h1>
+          <p className="mt-1 text-sm text-muted">
+            Карточка документа: файл, версии, согласование, история. Реестр по категориям.
+          </p>
+        </div>
+        <button onClick={() => router.push(wsHref(ws, "/docs/settings"))}
+          className="shrink-0 rounded-lg bg-surface px-3 py-1.5 text-xs text-muted transition hover:text-text">
+          ⚙ Настройки
+        </button>
       </header>
 
       <div className="mb-5 flex flex-col gap-2 sm:flex-row">

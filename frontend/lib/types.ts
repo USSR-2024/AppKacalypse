@@ -268,6 +268,57 @@ export interface DocRoute {
   activeStepId?: string | null;
 }
 
+// ── Админка модуля («Настройки») ─────────────────────────────────────────────
+export interface DocAdminGroup {
+  id: string;
+  code: string;
+  name: string;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface DocAdminType {
+  id: string;
+  code: string;
+  name: string;
+  groupId: string | null;
+  groupName: string | null;
+  registryMask: string;
+  requiresNote: boolean;
+  slaDays: number;
+  requiresCounterparty: boolean;
+  requiresValidity: boolean;
+  riskLevel: string | null;
+  isActive: boolean;
+}
+
+export type OrgUnitRole = "lead" | "member" | "deputy";
+
+export interface DocUnitMember {
+  unitId: string;
+  userId: string;
+  role: OrgUnitRole;
+  canApprove: boolean;
+  displayName: string;
+}
+
+export interface DocUnit {
+  id: string;
+  code: string;
+  name: string;
+  isActive: boolean;
+  members: DocUnitMember[];
+}
+
+export interface DocMatrixRow {
+  id: string;
+  unitId: string;
+  unitName: string;
+  stageNo: number;
+  isRequired: boolean;
+  slaDays: number | null;
+}
+
 export interface DocInboxItem {
   id: string;
   registryNumber: string | null;

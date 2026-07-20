@@ -20,6 +20,7 @@ import { transcriptionRoutes, transcribeWorkerRoutes } from './routes/transcript
 import { meetingRoutes, meetingGuestRoutes, captionWorkerRoutes, livekitWebhookRoutes } from './routes/meetings.js';
 import { documentRoutes } from './routes/documents.js';
 import { dsRoutes } from './routes/documents-ds.js';
+import { docsAdminRoutes } from './routes/documents-admin.js';
 import { startScheduler } from './lib/scheduler.js';
 
 const app = new Hono();
@@ -37,6 +38,7 @@ app.route('/api/users', userRoutes);
 app.route('/api/assistant', assistantRoutes);
 app.route('/api/documents', documentRoutes);
 app.route('/api/ds', dsRoutes);   // DS-фейсинг (файл + колбэк), БЕЗ requireAuth — авторизация по токену
+app.route('/api/docs-admin', docsAdminRoutes);   // «Настройки» модуля: справочники, функц. группы, матрица
 app.route('/api/telegram', telegramRoutes);
 app.route('/api/push', pushRoutes);
 app.route('/api/broadcast', broadcastRoutes);
