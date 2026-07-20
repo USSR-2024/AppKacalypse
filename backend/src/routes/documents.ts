@@ -9,7 +9,7 @@ import { requireWorkspace } from '../lib/workspace-middleware.js';
 import { nextRegistryNumber, visibilityCond, canView, isDocsAdmin, logDoc, versionKey, dsKey } from '../lib/dms.js';
 import { putVersion, getVersionStream } from '../lib/dms-storage.js';
 import { BLANK_DOCX_B64 } from '../lib/blank-docx.js';
-import { startRoute, activeStepFor, approveStep, rejectStep, type ApproverInput } from '../lib/route-engine.js';
+import { startRoute, activeStepForUser, approveStep, rejectStep, assembleMatrix, type RouteStepInput } from '../lib/route-engine.js';
 import { notifyApprovalStep, notifyApprovalDecision } from '../lib/notify.js';
 import { env } from '../lib/env.js';
 import {
@@ -379,11 +379,29 @@ documentRoutes.get('/:id/versions/:versionId/file', async (c) => {
   return c.body(Readable.toWeb(node) as ReadableStream);
 });
 
+// ── Предпросмотр маршрута ────────────────────────────────────────────────────
+// Есть ли матрица для типа и как соберётся маршрут. Фронт по этому показывает либо
+// авто-предпросмотр (матрица), либо ручной выбор людей.
+documentRoutes.get('/:id/route-preview', async (c) => {
+  const w = c.get('workspace');
+  const u = c.get('user');
+  const id = c.req.param('id')!;
+  if (!(await canView(u, w.role, id))) return c.json({ error: 'forbidden' }, 403);
+  const [row] = await db.select({ typeId: doc.typeId }).from(doc).where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
+  if (!row) return c.json({ error: 'not_found' }, 404);
+
+  const asm = await assembleMatrix(w.id, row.typeId);
+  if (!asm.hasMatrix) return c.json({ mode: 'manual' });
+  const unresolvedRequired = asm.rows.filter((r) => r.isRequired && !r.assigneeId).map((r) => r.unitName);
+  return c.json({ mode: 'matrix', rows: asm.rows, canSubmit: unresolvedRequired.length === 0, unresolvedRequired });
+});
+
 // ── Переход на согласование ──────────────────────────────────────────────────
-// Здесь карточка получает реестровый номер (ОДИН РАЗ) и стартует маршрут: цепочка
-// согласующих, назначенных вручную. Автосборку из матрицы по типу подключит фаза 2/3.
+// Карточка получает реестровый номер (ОДИН РАЗ) и стартует маршрут. Если у типа
+// есть матрица — маршрут собирается САМ (группы → конкретные визирующие); иначе
+// берём переданный вручную список людей (ad-hoc).
 const submitSchema = z.object({
-  approvers: z.array(z.string().uuid()).min(1).max(20),   // порядок = порядок согласования
+  approvers: z.array(z.string().uuid()).max(20).optional(),   // нужны только при РУЧНОМ маршруте (нет матрицы)
 });
 
 documentRoutes.post('/:id/submit', async (c) => {
@@ -391,26 +409,13 @@ documentRoutes.post('/:id/submit', async (c) => {
   const u = c.get('user');
   const id = c.req.param('id')!;
   const p = submitSchema.safeParse(await c.req.json().catch(() => ({})));
-  if (!p.success) return c.json({ error: 'approvers_required' }, 400);
-  // Дубли убираем, сохраняя порядок: два одинаковых шага подряд — бессмыслица.
-  const approverIds = [...new Set(p.data.approvers)];
+  if (!p.success) return c.json({ error: 'bad_request' }, 400);
 
   const [row] = await db.select().from(doc).where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
   if (!row) return c.json({ error: 'not_found' }, 404);
   if (!isDocsAdmin(w.role) && row.ownerId !== u.sub && row.authorId !== u.sub) return c.json({ error: 'forbidden' }, 403);
-  // Отправляем черновик или карточку, вернувшуюся на корректировку (новый круг).
   if (row.status !== 'draft' && row.status !== 'rework') return c.json({ error: 'not_submittable' }, 409);
   if (!row.currentVersionId) return c.json({ error: 'no_version' }, 409);   // согласовывать нечего
-
-  // Согласующие должны быть активными участниками пространства.
-  const members = await db
-    .select({ id: schema.users.id, name: schema.users.displayName })
-    .from(schema.workspaceMembers)
-    .innerJoin(schema.users, eq(schema.users.id, schema.workspaceMembers.userId))
-    .where(and(eq(schema.workspaceMembers.workspaceId, w.id), eq(schema.workspaceMembers.status, 'active'), inArray(schema.users.id, approverIds)));
-  const byId = new Map(members.map((m) => [m.id, m.name]));
-  if (approverIds.some((aid) => !byId.has(aid))) return c.json({ error: 'bad_approver' }, 400);
-  const approvers: ApproverInput[] = approverIds.map((aid) => ({ userId: aid, name: byId.get(aid)! }));
 
   const [type] = await db.select({
     id: schema.docTypes.id, code: schema.docTypes.code, registryMask: schema.docTypes.registryMask,
@@ -418,11 +423,35 @@ documentRoutes.post('/:id/submit', async (c) => {
   }).from(schema.docTypes).where(eq(schema.docTypes.id, row.typeId)).limit(1);
   if (!type) return c.json({ error: 'bad_type' }, 400);
 
-  // Записка обязательна по флагу типа — без неё маршрут не запускается.
   if (type.requiresNote) {
     const [note] = await db.select({ id: schema.explanatoryNotes.id })
       .from(schema.explanatoryNotes).where(eq(schema.explanatoryNotes.documentId, id)).limit(1);
     if (!note) return c.json({ error: 'note_required' }, 409);
+  }
+
+  // ── Собрать шаги: из матрицы либо из ручного списка ──
+  const asm = await assembleMatrix(w.id, row.typeId);
+  let steps: RouteStepInput[];
+  let definition: Record<string, unknown>;
+  if (asm.hasMatrix) {
+    const unresolved = asm.rows.filter((r) => r.isRequired && !r.assigneeId).map((r) => r.unitName);
+    if (unresolved.length) return c.json({ error: 'unresolved_groups', groups: unresolved }, 409);
+    steps = asm.rows.filter((r) => r.assigneeId).map((r) => ({ unitId: r.unitId, assigneeId: r.assigneeId!, stageNo: r.stageNo, isRequired: r.isRequired }));
+    if (!steps.length) return c.json({ error: 'empty_route' }, 409);
+    definition = { mode: 'matrix', rows: asm.rows };
+  } else {
+    const approverIds = [...new Set(p.data.approvers ?? [])];
+    if (!approverIds.length) return c.json({ error: 'approvers_required' }, 400);
+    const members = await db
+      .select({ id: schema.users.id, name: schema.users.displayName })
+      .from(schema.workspaceMembers)
+      .innerJoin(schema.users, eq(schema.users.id, schema.workspaceMembers.userId))
+      .where(and(eq(schema.workspaceMembers.workspaceId, w.id), eq(schema.workspaceMembers.status, 'active'), inArray(schema.users.id, approverIds)));
+    const byId = new Map(members.map((m) => [m.id, m.name]));
+    if (approverIds.some((aid) => !byId.has(aid))) return c.json({ error: 'bad_approver' }, 400);
+    // Ручной маршрут = цепочка: каждый на своей стадии (последовательно).
+    steps = approverIds.map((aid, i) => ({ unitId: null, assigneeId: aid, stageNo: i + 1, isRequired: true }));
+    definition = { mode: 'manual', approvers: approverIds.map((aid) => ({ userId: aid, name: byId.get(aid)! })) };
   }
 
   const [group] = row.groupId
@@ -430,21 +459,19 @@ documentRoutes.post('/:id/submit', async (c) => {
     : [{ code: '' }];
 
   const result = await db.transaction(async (tx) => {
-    // Номер присваивается один раз: если он уже есть (вернули на корректировку и
-    // отправили снова) — не перевыпускаем.
     const number = row.registryNumber ?? await nextRegistryNumber(tx, w.id, type, group?.code ?? '');
     await tx.update(doc).set({ registryNumber: number, status: 'on_approval', updatedAt: new Date() }).where(eq(doc.id, id));
     await logDoc(tx, {
       workspaceId: w.id, documentId: id, entity: 'document', entityId: id, actorId: u.sub,
       action: 'status_changed', payload: { from: row.status, to: 'on_approval', registryNumber: number },
     });
-    const started = await startRoute(tx, { workspaceId: w.id, documentId: id, approvers, actorId: u.sub });
-    return { registryNumber: number, firstAssignee: started.firstAssignee };
+    const started = await startRoute(tx, { workspaceId: w.id, documentId: id, steps, definition, actorId: u.sub });
+    return { registryNumber: number, firstAssignees: started.firstAssignees };
   });
 
-  // Уведомляем первого согласующего вне транзакции (внешние каналы не откатишь).
-  const actorName = byId.get(u.sub) ?? await actorDisplayName(u.sub);
-  notifyApprovalStep(id, row.title, result.firstAssignee.userId, actorName, u.sub).catch(() => {});
+  // Уведомляем всех согласующих первой стадии (вне транзакции — внешние каналы не откатишь).
+  const actorName = await actorDisplayName(u.sub);
+  for (const aid of [...new Set(result.firstAssignees)]) notifyApprovalStep(id, row.title, aid, actorName, u.sub).catch(() => {});
   return c.json({ ok: true, registryNumber: result.registryNumber, status: 'on_approval' });
 });
 
@@ -486,10 +513,11 @@ documentRoutes.get('/:id/route', async (c) => {
     .where(eq(schema.stepRemarks.documentId, id))
     .orderBy(desc(schema.stepRemarks.createdAt));
 
-  // Могу ли я решать прямо сейчас: активный шаг маршрута назначен на меня.
-  const active = steps.find((s) => s.status === 'active');
-  const canDecide = !!active && active.assigneeId === u.sub;
-  return c.json({ route, steps, remarks, canDecide, activeStepId: active?.id ?? null });
+  // Могу ли я решать прямо сейчас: есть активный шаг ТЕКУЩЕЙ стадии, назначенный на меня
+  // (в параллельной стадии активных несколько — важен свой).
+  const myActive = steps.find((s) => s.status === 'active' && s.assigneeId === u.sub);
+  const canDecide = !!myActive;
+  return c.json({ route, steps, remarks, canDecide, activeStepId: myActive?.id ?? null });
 });
 
 // Решение по активному шагу: согласовать (можно с комментарием) или вернуть (замечание).
@@ -510,38 +538,34 @@ documentRoutes.post('/:id/decision', async (c) => {
   if (!row) return c.json({ error: 'not_found' }, 404);
   if (row.status !== 'on_approval') return c.json({ error: 'not_on_approval' }, 409);
 
-  const step = await activeStepFor(id);
-  if (!step) return c.json({ error: 'no_active_step' }, 409);
-  // Решает только тот, на ком активный шаг. Админ модуля вмешивается отдельно (§5.6, позже).
-  if (step.assigneeId !== u.sub) return c.json({ error: 'not_your_step' }, 403);
+  // Мой активный шаг (в параллельной стадии у каждого свой). Нет — не моя очередь.
+  const step = await activeStepForUser(id, u.sub);
+  if (!step) return c.json({ error: 'not_your_step' }, 403);
 
   if (p.data.decision === 'reject' && !p.data.comment?.trim()) {
     return c.json({ error: 'remark_required' }, 400);   // вернуть без причины нельзя
   }
 
-  const outcome = await db.transaction(async (tx) => {
+  const res = await db.transaction(async (tx) => {
     if (p.data.decision === 'approve') {
-      const { finished } = await approveStep(tx, {
+      const { finished, nextAssignees } = await approveStep(tx, {
         workspaceId: w.id, documentId: id, routeId: step.routeId, stepId: step.stepId, stageNo: step.stageNo,
         currentVersionId: row.currentVersionId, actorId: u.sub, comment: p.data.comment ?? null,
       });
-      return finished ? 'finished' as const : 'approved' as const;
+      return { outcome: finished ? 'finished' as const : 'approved' as const, nextAssignees };
     }
     await rejectStep(tx, {
       workspaceId: w.id, documentId: id, routeId: step.routeId, stepId: step.stepId, stageNo: step.stageNo,
       currentVersionId: row.currentVersionId, actorId: u.sub, remark: p.data.comment!,
     });
-    return 'rework' as const;
+    return { outcome: 'rework' as const, nextAssignees: [] as string[] };
   });
 
-  // Уведомления вне транзакции. При согласовании — следующему согласующему; инициатору — об исходе.
+  // Уведомления вне транзакции. Согласование сдвинуло стадию → зовём следующих; инициатору — об исходе.
   const actorName = await actorDisplayName(u.sub);
-  if (outcome === 'approved') {
-    const next = await activeStepFor(id);
-    if (next?.assigneeId) notifyApprovalStep(id, row.title, next.assigneeId, actorName, u.sub).catch(() => {});
-  }
-  notifyApprovalDecision(id, row.title, row.authorId, actorName, outcome, u.sub).catch(() => {});
-  return c.json({ ok: true, outcome });
+  for (const aid of [...new Set(res.nextAssignees)]) notifyApprovalStep(id, row.title, aid, actorName, u.sub).catch(() => {});
+  notifyApprovalDecision(id, row.title, row.authorId, actorName, res.outcome, u.sub).catch(() => {});
+  return c.json({ ok: true, outcome: res.outcome });
 });
 
 // ── ONLYOFFICE: конфиг редактора, forcesave, история ─────────────────────────

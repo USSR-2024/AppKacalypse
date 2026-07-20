@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/store";
 import { useWs, wsHref } from "@/lib/ws";
 import { Sheet } from "@/components/Sheet";
 import { DOC_PRIORITY, StatusChip, STEP_STATUS, STEP_DOT, fileSize, isOfficeDoc } from "@/lib/docStrings";
-import type { DocCard, DocActivity, DocRoute, DocMember } from "@/lib/types";
+import type { DocCard, DocActivity, DocRoute, DocMember, DocRoutePreview } from "@/lib/types";
 
 // Человеческие подписи событий журнала: в БД лежат коды (created, version_saved…).
 const ACTION_LABEL: Record<string, string> = {
@@ -283,24 +283,25 @@ export default function DocCardPage() {
   );
 }
 
-// Отправка на согласование: выбор согласующих по порядку. Клик добавляет в конец
-// цепочки, повторный — убирает. Порядок клика = порядок согласования.
+// Отправка на согласование. Если у типа есть матрица — маршрут собран заранее,
+// показываем предпросмотр (только чтение). Иначе — ручной выбор людей по порядку.
 function SubmitSheet({ docId, rework, onClose, onDone }: { docId: string; rework: boolean; onClose: () => void; onDone: () => void }) {
-  const { data: members } = useSWR<DocMember[]>("/documents/members", fetcher);
+  const { data: preview } = useSWR<DocRoutePreview>(`/documents/${docId}/route-preview`, fetcher);
+  const matrix = preview?.mode === "matrix";
+  const { data: members } = useSWR<DocMember[]>(preview && !matrix ? "/documents/members" : null, fetcher);
   const [chain, setChain] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const nameOf = (uid: string) => members?.find((m) => m.id === uid)?.displayName ?? "—";
-  const toggle = (uid: string) =>
-    setChain((c) => (c.includes(uid) ? c.filter((x) => x !== uid) : [...c, uid]));
+  const toggle = (uid: string) => setChain((c) => (c.includes(uid) ? c.filter((x) => x !== uid) : [...c, uid]));
 
   async function submit() {
     setErr(null);
-    if (chain.length === 0) return setErr("Выберите хотя бы одного согласующего");
+    if (!matrix && chain.length === 0) return setErr("Выберите хотя бы одного согласующего");
     setBusy(true);
     try {
-      await api(`/documents/${docId}/submit`, { method: "POST", body: JSON.stringify({ approvers: chain }) });
+      await api(`/documents/${docId}/submit`, { method: "POST", body: JSON.stringify(matrix ? {} : { approvers: chain }) });
       onDone();
     } catch (e) {
       const code = e instanceof Error ? e.message : "";
@@ -308,48 +309,87 @@ function SubmitSheet({ docId, rework, onClose, onDone }: { docId: string; rework
         code === "no_version" ? "Сначала загрузите файл документа" :
         code === "note_required" ? "Для этого типа нужна пояснительная записка" :
         code === "approvers_required" ? "Выберите согласующих" :
+        code === "unresolved_groups" ? "В некоторых обязательных группах некому визировать — задайте состав в Настройках" :
         "Не удалось отправить на согласование",
       );
       setBusy(false);
     }
   }
 
+  // Группируем предпросмотр матрицы по стадиям.
+  const stages = matrix && preview?.rows
+    ? [...new Set(preview.rows.map((r) => r.stageNo))].sort((a, b) => a - b)
+    : [];
+
   return (
     <Sheet onClose={onClose} size="lg">
       <h2 className="mb-1 text-lg font-semibold">{rework ? "Отправить повторно" : "На согласование"}</h2>
-      <p className="mb-4 text-sm text-muted">
-        Выберите согласующих по порядку — документ пойдёт по цепочке от первого к последнему.
-        {!rework && " Карточка получит реестровый номер, и править её будет уже нельзя."}
-      </p>
 
-      {chain.length > 0 && (
-        <div className="mb-3 flex flex-col gap-1.5">
-          {chain.map((uid, i) => (
-            <div key={uid} className="flex items-center gap-2 rounded-lg bg-accent/10 px-3 py-2 text-sm">
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-medium text-white">{i + 1}</span>
-              <span className="min-w-0 flex-1 truncate">{nameOf(uid)}</span>
-              <button onClick={() => toggle(uid)} className="shrink-0 text-xs text-muted hover:text-danger">убрать</button>
-            </div>
-          ))}
-        </div>
+      {!preview && <p className="text-sm text-muted">Загрузка…</p>}
+
+      {matrix && preview?.rows && (
+        <>
+          <p className="mb-4 text-sm text-muted">
+            Маршрут собран по матрице типа. Согласующие в одной стадии решают параллельно, стадии идут по очереди.
+            {!rework && " Карточка получит реестровый номер."}
+          </p>
+          <div className="mb-4 flex flex-col gap-3">
+            {stages.map((st) => (
+              <div key={st}>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">Стадия {st}</div>
+                <div className="flex flex-col gap-1.5">
+                  {preview.rows!.filter((r) => r.stageNo === st).map((r) => (
+                    <div key={r.unitId} className="flex items-center justify-between gap-2 rounded-lg bg-surface px-3 py-2 text-sm">
+                      <span className="min-w-0 truncate">
+                        {r.unitName}
+                        {!r.isRequired && <span className="text-xs text-muted"> · необязат.</span>}
+                      </span>
+                      <span className={`shrink-0 text-xs ${r.assigneeName ? "text-muted" : "text-danger"}`}>
+                        {r.assigneeName ?? "некому визировать"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          {preview.unresolvedRequired && preview.unresolvedRequired.length > 0 && (
+            <p className="mb-3 rounded-xl bg-danger/10 px-3 py-2 text-xs text-danger">
+              Некому визировать в обязательных группах: {preview.unresolvedRequired.join(", ")}. Задайте состав в «Настройки → Группы согласования».
+            </p>
+          )}
+        </>
       )}
 
-      <label className="text-xs text-muted">Участники пространства</label>
-      <div className="mb-4 mt-1 flex max-h-60 flex-col gap-1 overflow-y-auto">
-        {members?.filter((m) => !chain.includes(m.id)).map((m) => (
-          <button
-            key={m.id}
-            onClick={() => toggle(m.id)}
-            className="flex items-center justify-between rounded-lg bg-surface px-3 py-2 text-left text-sm transition hover:bg-surface-2"
-          >
-            <span className="truncate">{m.displayName}</span>
-            <span className="shrink-0 text-xs text-accent">+ добавить</span>
-          </button>
-        ))}
-        {members && members.filter((m) => !chain.includes(m.id)).length === 0 && (
-          <p className="px-1 py-2 text-xs text-muted">Все участники уже в цепочке.</p>
-        )}
-      </div>
+      {preview && !matrix && (
+        <>
+          <p className="mb-4 text-sm text-muted">
+            Матрицы для этого типа нет — выберите согласующих вручную, по порядку.
+            {!rework && " Карточка получит реестровый номер."}
+          </p>
+          {chain.length > 0 && (
+            <div className="mb-3 flex flex-col gap-1.5">
+              {chain.map((uid, i) => (
+                <div key={uid} className="flex items-center gap-2 rounded-lg bg-accent/10 px-3 py-2 text-sm">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-medium text-white">{i + 1}</span>
+                  <span className="min-w-0 flex-1 truncate">{nameOf(uid)}</span>
+                  <button onClick={() => toggle(uid)} className="shrink-0 text-xs text-muted hover:text-danger">убрать</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <label className="text-xs text-muted">Участники пространства</label>
+          <div className="mb-4 mt-1 flex max-h-60 flex-col gap-1 overflow-y-auto">
+            {members?.filter((m) => !chain.includes(m.id)).map((m) => (
+              <button key={m.id} onClick={() => toggle(m.id)}
+                className="flex items-center justify-between rounded-lg bg-surface px-3 py-2 text-left text-sm transition hover:bg-surface-2">
+                <span className="truncate">{m.displayName}</span>
+                <span className="shrink-0 text-xs text-accent">+ добавить</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       {err && <p className="mb-3 text-sm text-danger">{err}</p>}
 
@@ -357,7 +397,7 @@ function SubmitSheet({ docId, rework, onClose, onDone }: { docId: string; rework
         <button onClick={onClose} className="flex-1 rounded-xl bg-surface px-4 py-3 text-sm font-medium">Отмена</button>
         <button
           onClick={submit}
-          disabled={busy}
+          disabled={busy || !preview || (matrix && preview?.canSubmit === false)}
           className="flex-1 rounded-xl bg-accent px-4 py-3 text-sm font-medium text-white disabled:opacity-40"
         >
           {busy ? "Отправляем…" : "Отправить"}

@@ -319,6 +319,22 @@ export interface DocMatrixRow {
   slaDays: number | null;
 }
 
+export interface DocPreviewRow {
+  unitId: string;
+  unitName: string;
+  stageNo: number;
+  isRequired: boolean;
+  assigneeId: string | null;
+  assigneeName: string | null;
+}
+
+export interface DocRoutePreview {
+  mode: "matrix" | "manual";
+  rows?: DocPreviewRow[];
+  canSubmit?: boolean;
+  unresolvedRequired?: string[];
+}
+
 export interface DocInboxItem {
   id: string;
   registryNumber: string | null;
