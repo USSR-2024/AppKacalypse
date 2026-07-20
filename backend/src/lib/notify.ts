@@ -32,6 +32,85 @@ export async function notifyAdminGranted(userId: string, workspaceId: string): P
   );
 }
 
+/** Путь к документу внутри его воркспейса: /<slug>/docs/<id>. Slug берём из документа. */
+async function docPath(documentId: string): Promise<string> {
+  const [row] = await db
+    .select({ slug: schema.workspaces.slug })
+    .from(schema.documents)
+    .innerJoin(schema.workspaces, eq(schema.workspaces.id, schema.documents.workspaceId))
+    .where(eq(schema.documents.id, documentId))
+    .limit(1);
+  return row ? `/${row.slug}/docs/${documentId}` : `/docs/${documentId}`;
+}
+
+/**
+ * Уведомить согласующего, что подошла его очередь в маршруте. Каналы — Telegram + push.
+ * initiatorId исключается (сам себя не согласует — если и стоит в цепочке, узнает в UI).
+ */
+export async function notifyApprovalStep(
+  documentId: string,
+  docTitle: string,
+  approverUserId: string,
+  initiatorName: string,
+  initiatorId: string,
+): Promise<void> {
+  if (approverUserId === initiatorId) return;
+
+  const [ident] = await db
+    .select({ externalId: schema.authIdentities.externalId })
+    .from(schema.authIdentities)
+    .where(and(eq(schema.authIdentities.provider, "telegram"), eq(schema.authIdentities.userId, approverUserId)))
+    .limit(1);
+
+  const path = await docPath(documentId);
+  if (ident) {
+    await sendMessage(
+      ident.externalId,
+      `📄 <b>${esc(initiatorName)}</b> просит согласовать документ:\n` +
+        `«${esc(docTitle)}»\n\nОткрыть: ${APP_URL}${path}`,
+    );
+  }
+  await sendPush([approverUserId], {
+    title: "📄 На согласование",
+    body: `${initiatorName}: ${docTitle}`,
+    url: path,
+  });
+}
+
+/**
+ * Уведомить инициатора об исходе шага согласования: согласовано (и, возможно, весь
+ * маршрут завершён) либо возвращено на корректировку. Канал — Telegram + push.
+ */
+export async function notifyApprovalDecision(
+  documentId: string,
+  docTitle: string,
+  initiatorUserId: string,
+  approverName: string,
+  outcome: "approved" | "finished" | "rework",
+  actorId: string,
+): Promise<void> {
+  if (initiatorUserId === actorId) return;
+
+  const [ident] = await db
+    .select({ externalId: schema.authIdentities.externalId })
+    .from(schema.authIdentities)
+    .where(and(eq(schema.authIdentities.provider, "telegram"), eq(schema.authIdentities.userId, initiatorUserId)))
+    .limit(1);
+
+  const head =
+    outcome === "finished" ? "✅ Документ полностью согласован" :
+    outcome === "rework" ? "↩️ Документ вернули на корректировку" :
+    "✅ Шаг согласован";
+  const path = await docPath(documentId);
+  if (ident) {
+    await sendMessage(
+      ident.externalId,
+      `${head}: «${esc(docTitle)}»\n${esc(approverName)}\n\nОткрыть: ${APP_URL}${path}`,
+    );
+  }
+  await sendPush([initiatorUserId], { title: head, body: `${approverName}: ${docTitle}`, url: path });
+}
+
 /** Путь к задаче внутри её воркспейса: /<slug>/tasks/<id>. Slug берём из задачи. */
 async function taskPath(taskId: string): Promise<string> {
   const [row] = await db

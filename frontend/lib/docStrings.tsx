@@ -1,4 +1,4 @@
-import type { DocumentStatus, DocPriority } from "./types";
+import type { DocumentStatus, DocPriority, StepStatus } from "./types";
 
 // Подписи модуля «Документы». Пока только RU: модуль внутренний, испанский —
 // когда дойдёт до пользователей в Эквадоре (в трекере для этого есть meetStrings).
@@ -46,6 +46,23 @@ export function StatusChip({ status }: { status: DocumentStatus }) {
     </span>
   );
 }
+
+// Статусы шага маршрута: подпись + цвет точки в цепочке согласования.
+export const STEP_STATUS: Record<StepStatus, string> = {
+  pending: "ожидает",
+  active: "на согласовании",
+  approved: "согласовано",
+  rejected: "вернул на корректировку",
+  skipped: "пропущено",
+};
+
+export const STEP_DOT: Record<StepStatus, string> = {
+  pending: "bg-surface-2",
+  active: "bg-accent",
+  approved: "bg-emerald-500",
+  rejected: "bg-danger",
+  skipped: "bg-surface-2",
+};
 
 export function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} Б`;

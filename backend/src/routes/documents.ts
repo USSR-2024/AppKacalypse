@@ -1,19 +1,27 @@
 import { Hono } from 'hono';
 import { Readable } from 'node:stream';
 import { extname } from 'node:path';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '../db/index.js';
 import { requireAuth } from '../lib/auth-middleware.js';
 import { requireWorkspace } from '../lib/workspace-middleware.js';
 import { nextRegistryNumber, visibilityCond, canView, isDocsAdmin, logDoc, versionKey, dsKey } from '../lib/dms.js';
 import { putVersion, getVersionStream } from '../lib/dms-storage.js';
+import { startRoute, activeStepFor, approveStep, rejectStep, type ApproverInput } from '../lib/route-engine.js';
+import { notifyApprovalStep, notifyApprovalDecision } from '../lib/notify.js';
 
 // /api/documents — карточки документов, версии, переход на согласование.
 // Модуль «Документы»: спека docs/ТЗ-документооборот.md, порядок docs/ПЛАН-документооборот.md.
 
 const doc = schema.documents;
 const ver = schema.documentVersions;
+
+/** Имя пользователя для уведомлений (в JWT его нет — только id и роль). */
+async function actorDisplayName(userId: string): Promise<string> {
+  const [row] = await db.select({ name: schema.users.displayName }).from(schema.users).where(eq(schema.users.id, userId)).limit(1);
+  return row?.name ?? 'Пользователь';
+}
 
 export const documentRoutes = new Hono();
 documentRoutes.use('*', requireAuth, requireWorkspace);
@@ -65,6 +73,46 @@ documentRoutes.get('/types', async (c) => {
   return c.json(rows);
 });
 
+// Участники пространства — кого можно поставить согласующим. ★ Строго ДО '/:id'.
+documentRoutes.get('/members', async (c) => {
+  const w = c.get('workspace');
+  const rows = await db
+    .select({ id: schema.users.id, displayName: schema.users.displayName, role: schema.workspaceMembers.role })
+    .from(schema.workspaceMembers)
+    .innerJoin(schema.users, eq(schema.users.id, schema.workspaceMembers.userId))
+    .where(and(eq(schema.workspaceMembers.workspaceId, w.id), eq(schema.workspaceMembers.status, 'active')))
+    .orderBy(schema.users.displayName);
+  return c.json(rows);
+});
+
+// Моя очередь: документы, где сейчас ждут МОЕГО решения (активный шаг на мне).
+// ★ Строго ДО '/:id'. Это «жду моего решения» — главный видимый экран согласующего.
+documentRoutes.get('/inbox', async (c) => {
+  const w = c.get('workspace');
+  const u = c.get('user');
+  const rows = await db
+    .select({
+      id: doc.id, registryNumber: doc.registryNumber, title: doc.title, status: doc.status,
+      priority: doc.priority, dueAt: doc.dueAt, counterpartyName: doc.counterpartyName,
+      typeName: schema.docTypes.name, ownerName: schema.users.displayName,
+      stageNo: schema.routeSteps.stageNo, activatedAt: schema.routeSteps.activatedAt,
+      updatedAt: doc.updatedAt,
+    })
+    .from(schema.routeSteps)
+    .innerJoin(schema.routeInstances, eq(schema.routeInstances.id, schema.routeSteps.routeInstanceId))
+    .innerJoin(doc, eq(doc.id, schema.routeInstances.documentId))
+    .leftJoin(schema.docTypes, eq(schema.docTypes.id, doc.typeId))
+    .leftJoin(schema.users, eq(schema.users.id, doc.ownerId))
+    .where(and(
+      eq(doc.workspaceId, w.id),
+      eq(schema.routeSteps.assigneeId, u.sub),
+      eq(schema.routeSteps.status, 'active'),
+      eq(schema.routeInstances.status, 'running'),
+    ))
+    .orderBy(desc(schema.routeSteps.activatedAt));
+  return c.json(rows);
+});
+
 // ── Карточка ─────────────────────────────────────────────────────────────────
 documentRoutes.get('/:id', async (c) => {
   const w = c.get('workspace');
@@ -106,8 +154,11 @@ documentRoutes.get('/:id', async (c) => {
 
   // Черновик правит только его владелец (или админ модуля); дальше карточка read-only,
   // менять её содержимое можно лишь загрузкой новой версии.
-  const canEdit = row.status === 'draft' && (isDocsAdmin(w.role) || row.ownerId === u.sub || row.authorId === u.sub);
-  return c.json({ ...row, versions, canEdit, canManage: isDocsAdmin(w.role) });
+  const mine = isDocsAdmin(w.role) || row.ownerId === u.sub || row.authorId === u.sub;
+  const canEdit = row.status === 'draft' && mine;
+  // Отправить на согласование может владелец карточки из черновика или из корректировки.
+  const canSubmit = (row.status === 'draft' || row.status === 'rework') && mine;
+  return c.json({ ...row, versions, canEdit, canSubmit, canManage: isDocsAdmin(w.role) });
 });
 
 // ── Создание ─────────────────────────────────────────────────────────────────
@@ -286,18 +337,37 @@ documentRoutes.get('/:id/versions/:versionId/file', async (c) => {
 });
 
 // ── Переход на согласование ──────────────────────────────────────────────────
-// Здесь карточка получает реестровый номер — ОДИН РАЗ и навсегда.
-// Сборку маршрута из матрицы подключит фаза 3; сейчас переход только меняет статус.
+// Здесь карточка получает реестровый номер (ОДИН РАЗ) и стартует маршрут: цепочка
+// согласующих, назначенных вручную. Автосборку из матрицы по типу подключит фаза 2/3.
+const submitSchema = z.object({
+  approvers: z.array(z.string().uuid()).min(1).max(20),   // порядок = порядок согласования
+});
+
 documentRoutes.post('/:id/submit', async (c) => {
   const w = c.get('workspace');
   const u = c.get('user');
   const id = c.req.param('id')!;
+  const p = submitSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!p.success) return c.json({ error: 'approvers_required' }, 400);
+  // Дубли убираем, сохраняя порядок: два одинаковых шага подряд — бессмыслица.
+  const approverIds = [...new Set(p.data.approvers)];
 
   const [row] = await db.select().from(doc).where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
   if (!row) return c.json({ error: 'not_found' }, 404);
   if (!isDocsAdmin(w.role) && row.ownerId !== u.sub && row.authorId !== u.sub) return c.json({ error: 'forbidden' }, 403);
-  if (row.status !== 'draft') return c.json({ error: 'not_draft' }, 409);
+  // Отправляем черновик или карточку, вернувшуюся на корректировку (новый круг).
+  if (row.status !== 'draft' && row.status !== 'rework') return c.json({ error: 'not_submittable' }, 409);
   if (!row.currentVersionId) return c.json({ error: 'no_version' }, 409);   // согласовывать нечего
+
+  // Согласующие должны быть активными участниками пространства.
+  const members = await db
+    .select({ id: schema.users.id, name: schema.users.displayName })
+    .from(schema.workspaceMembers)
+    .innerJoin(schema.users, eq(schema.users.id, schema.workspaceMembers.userId))
+    .where(and(eq(schema.workspaceMembers.workspaceId, w.id), eq(schema.workspaceMembers.status, 'active'), inArray(schema.users.id, approverIds)));
+  const byId = new Map(members.map((m) => [m.id, m.name]));
+  if (approverIds.some((aid) => !byId.has(aid))) return c.json({ error: 'bad_approver' }, 400);
+  const approvers: ApproverInput[] = approverIds.map((aid) => ({ userId: aid, name: byId.get(aid)! }));
 
   const [type] = await db.select({
     id: schema.docTypes.id, code: schema.docTypes.code, registryMask: schema.docTypes.registryMask,
@@ -323,11 +393,112 @@ documentRoutes.post('/:id/submit', async (c) => {
     await tx.update(doc).set({ registryNumber: number, status: 'on_approval', updatedAt: new Date() }).where(eq(doc.id, id));
     await logDoc(tx, {
       workspaceId: w.id, documentId: id, entity: 'document', entityId: id, actorId: u.sub,
-      action: 'status_changed', payload: { from: 'draft', to: 'on_approval', registryNumber: number },
+      action: 'status_changed', payload: { from: row.status, to: 'on_approval', registryNumber: number },
     });
-    return { registryNumber: number };
+    const started = await startRoute(tx, { workspaceId: w.id, documentId: id, approvers, actorId: u.sub });
+    return { registryNumber: number, firstAssignee: started.firstAssignee };
   });
-  return c.json({ ok: true, ...result, status: 'on_approval' });
+
+  // Уведомляем первого согласующего вне транзакции (внешние каналы не откатишь).
+  const actorName = byId.get(u.sub) ?? await actorDisplayName(u.sub);
+  notifyApprovalStep(id, row.title, result.firstAssignee.userId, actorName, u.sub).catch(() => {});
+  return c.json({ ok: true, registryNumber: result.registryNumber, status: 'on_approval' });
+});
+
+// ── Маршрут документа: цепочка шагов + замечания ─────────────────────────────
+documentRoutes.get('/:id/route', async (c) => {
+  const w = c.get('workspace');
+  const u = c.get('user');
+  const id = c.req.param('id')!;
+  if (!(await canView(u, w.role, id))) return c.json({ error: 'forbidden' }, 403);
+
+  // Последний (текущий) круг согласования.
+  const [route] = await db
+    .select({ id: schema.routeInstances.id, status: schema.routeInstances.status, currentStage: schema.routeInstances.currentStage, iteration: schema.routeInstances.iteration, startedAt: schema.routeInstances.startedAt })
+    .from(schema.routeInstances)
+    .where(eq(schema.routeInstances.documentId, id))
+    .orderBy(desc(schema.routeInstances.iteration))
+    .limit(1);
+  if (!route) return c.json({ route: null, steps: [], remarks: [] });
+
+  const steps = await db
+    .select({
+      id: schema.routeSteps.id, stageNo: schema.routeSteps.stageNo, status: schema.routeSteps.status,
+      assigneeId: schema.routeSteps.assigneeId, assigneeName: schema.users.displayName,
+      activatedAt: schema.routeSteps.activatedAt, decidedAt: schema.routeSteps.decidedAt,
+    })
+    .from(schema.routeSteps)
+    .leftJoin(schema.users, eq(schema.users.id, schema.routeSteps.assigneeId))
+    .where(eq(schema.routeSteps.routeInstanceId, route.id))
+    .orderBy(schema.routeSteps.stageNo);
+
+  const remarks = await db
+    .select({
+      id: schema.stepRemarks.id, stepId: schema.stepRemarks.stepId, kind: schema.stepRemarks.kind,
+      text: schema.stepRemarks.text, createdAt: schema.stepRemarks.createdAt,
+      authorName: schema.users.displayName,
+    })
+    .from(schema.stepRemarks)
+    .leftJoin(schema.users, eq(schema.users.id, schema.stepRemarks.authorId))
+    .where(eq(schema.stepRemarks.documentId, id))
+    .orderBy(desc(schema.stepRemarks.createdAt));
+
+  // Могу ли я решать прямо сейчас: активный шаг маршрута назначен на меня.
+  const active = steps.find((s) => s.status === 'active');
+  const canDecide = !!active && active.assigneeId === u.sub;
+  return c.json({ route, steps, remarks, canDecide, activeStepId: active?.id ?? null });
+});
+
+// Решение по активному шагу: согласовать (можно с комментарием) или вернуть (замечание).
+const decisionSchema = z.object({
+  decision: z.enum(['approve', 'reject']),
+  comment: z.string().max(5000).optional(),
+});
+
+documentRoutes.post('/:id/decision', async (c) => {
+  const w = c.get('workspace');
+  const u = c.get('user');
+  const id = c.req.param('id')!;
+  const p = decisionSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!p.success) return c.json({ error: 'bad_request' }, 400);
+
+  const [row] = await db.select({ id: doc.id, title: doc.title, status: doc.status, ownerId: doc.ownerId, authorId: doc.authorId, currentVersionId: doc.currentVersionId })
+    .from(doc).where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  if (row.status !== 'on_approval') return c.json({ error: 'not_on_approval' }, 409);
+
+  const step = await activeStepFor(id);
+  if (!step) return c.json({ error: 'no_active_step' }, 409);
+  // Решает только тот, на ком активный шаг. Админ модуля вмешивается отдельно (§5.6, позже).
+  if (step.assigneeId !== u.sub) return c.json({ error: 'not_your_step' }, 403);
+
+  if (p.data.decision === 'reject' && !p.data.comment?.trim()) {
+    return c.json({ error: 'remark_required' }, 400);   // вернуть без причины нельзя
+  }
+
+  const outcome = await db.transaction(async (tx) => {
+    if (p.data.decision === 'approve') {
+      const { finished } = await approveStep(tx, {
+        workspaceId: w.id, documentId: id, routeId: step.routeId, stepId: step.stepId, stageNo: step.stageNo,
+        currentVersionId: row.currentVersionId, actorId: u.sub, comment: p.data.comment ?? null,
+      });
+      return finished ? 'finished' as const : 'approved' as const;
+    }
+    await rejectStep(tx, {
+      workspaceId: w.id, documentId: id, routeId: step.routeId, stepId: step.stepId, stageNo: step.stageNo,
+      currentVersionId: row.currentVersionId, actorId: u.sub, remark: p.data.comment!,
+    });
+    return 'rework' as const;
+  });
+
+  // Уведомления вне транзакции. При согласовании — следующему согласующему; инициатору — об исходе.
+  const actorName = await actorDisplayName(u.sub);
+  if (outcome === 'approved') {
+    const next = await activeStepFor(id);
+    if (next?.assigneeId) notifyApprovalStep(id, row.title, next.assigneeId, actorName, u.sub).catch(() => {});
+  }
+  notifyApprovalDecision(id, row.title, row.authorId, actorName, outcome, u.sub).catch(() => {});
+  return c.json({ ok: true, outcome });
 });
 
 // ── Журнал ───────────────────────────────────────────────────────────────────

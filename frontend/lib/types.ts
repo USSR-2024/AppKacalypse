@@ -210,6 +210,7 @@ export interface DocCard extends DocRow {
   currency: string | null;
   versions: DocVersion[];
   canEdit: boolean;
+  canSubmit: boolean;
   canManage: boolean;
 }
 
@@ -227,4 +228,57 @@ export interface DocActivity {
   payload: Record<string, unknown>;
   at: string;
   actorName: string | null;
+}
+
+// ── Маршрут согласования ─────────────────────────────────────────────────────
+export type StepStatus = "pending" | "active" | "approved" | "rejected" | "skipped";
+export type RouteStatus = "running" | "approved" | "rejected" | "cancelled";
+export type RemarkKind = "blocking" | "comment";
+
+export interface DocMember {
+  id: string;
+  displayName: string;
+  role: "owner" | "admin" | "member";
+}
+
+export interface DocRouteStep {
+  id: string;
+  stageNo: number;
+  status: StepStatus;
+  assigneeId: string | null;
+  assigneeName: string | null;
+  activatedAt: string | null;
+  decidedAt: string | null;
+}
+
+export interface DocRemark {
+  id: string;
+  stepId: string;
+  kind: RemarkKind;
+  text: string;
+  createdAt: string;
+  authorName: string | null;
+}
+
+export interface DocRoute {
+  route: { id: string; status: RouteStatus; currentStage: number; iteration: number; startedAt: string } | null;
+  steps: DocRouteStep[];
+  remarks: DocRemark[];
+  canDecide?: boolean;
+  activeStepId?: string | null;
+}
+
+export interface DocInboxItem {
+  id: string;
+  registryNumber: string | null;
+  title: string;
+  status: DocumentStatus;
+  priority: DocPriority;
+  dueAt: string | null;
+  counterpartyName: string | null;
+  typeName: string | null;
+  ownerName: string | null;
+  stageNo: number;
+  activatedAt: string | null;
+  updatedAt: string;
 }

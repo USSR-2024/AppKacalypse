@@ -6,7 +6,7 @@ import { fetcher, api } from "@/lib/api";
 import { useWs, wsHref } from "@/lib/ws";
 import { Sheet } from "@/components/Sheet";
 import { DOC_STATUS, DOC_PRIORITY, StatusChip } from "@/lib/docStrings";
-import type { DocRow, DocType, DocPriority } from "@/lib/types";
+import type { DocRow, DocType, DocPriority, DocInboxItem } from "@/lib/types";
 
 // Базовый список документов. Полный реестр с фасетами и категориями — фаза 6 плана.
 export default function DocsPage() {
@@ -15,6 +15,7 @@ export default function DocsPage() {
   const [sheet, setSheet] = useState(false);
   const [filter, setFilter] = useState<string>("");
   const { data, mutate } = useSWR<DocRow[]>(`/documents${filter ? `?status=${filter}` : ""}`, fetcher);
+  const { data: inbox } = useSWR<DocInboxItem[]>("/documents/inbox", fetcher);
 
   const dl = "ru-RU";
   const tabs: { v: string; label: string }[] = [
@@ -34,12 +35,25 @@ export default function DocsPage() {
         </p>
       </header>
 
-      <button
-        onClick={() => setSheet(true)}
-        className="mb-5 w-full rounded-xl bg-accent px-4 py-3 text-sm font-medium text-white lg:w-auto lg:px-6"
-      >
-        + Новый документ
-      </button>
+      <div className="mb-5 flex flex-col gap-2 sm:flex-row">
+        <button
+          onClick={() => setSheet(true)}
+          className="w-full rounded-xl bg-accent px-4 py-3 text-sm font-medium text-white sm:w-auto sm:px-6"
+        >
+          + Новый документ
+        </button>
+        {inbox && inbox.length > 0 && (
+          <button
+            onClick={() => router.push(wsHref(ws, "/docs/inbox"))}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-surface px-4 py-3 text-sm font-medium transition hover:bg-surface-2 sm:w-auto sm:px-6"
+          >
+            Жду решения
+            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1.5 text-xs font-semibold text-white">
+              {inbox.length}
+            </span>
+          </button>
+        )}
+      </div>
 
       <div className="mb-4 flex gap-1 overflow-x-auto pb-1">
         {tabs.map((t) => (

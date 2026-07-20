@@ -5,9 +5,9 @@ import useSWR from "swr";
 import { fetcher, api } from "@/lib/api";
 import { useAuth } from "@/lib/store";
 import { useWs, wsHref } from "@/lib/ws";
-import { ConfirmSheet } from "@/components/ConfirmSheet";
-import { DOC_PRIORITY, StatusChip, fileSize } from "@/lib/docStrings";
-import type { DocCard, DocActivity } from "@/lib/types";
+import { Sheet } from "@/components/Sheet";
+import { DOC_PRIORITY, StatusChip, STEP_STATUS, STEP_DOT, fileSize } from "@/lib/docStrings";
+import type { DocCard, DocActivity, DocRoute, DocMember } from "@/lib/types";
 
 // Человеческие подписи событий журнала: в БД лежат коды (created, version_saved…).
 const ACTION_LABEL: Record<string, string> = {
@@ -15,6 +15,9 @@ const ACTION_LABEL: Record<string, string> = {
   edited: "Карточка изменена",
   version_saved: "Загружена версия",
   status_changed: "Статус изменён",
+  route_started: "Отправлено на согласование",
+  approved: "Шаг согласован",
+  rejected: "Возвращено на корректировку",
 };
 
 export default function DocCardPage() {
@@ -23,16 +26,24 @@ export default function DocCardPage() {
   const router = useRouter();
   const token = useAuth((s) => s.token);
   const { data: d, mutate } = useSWR<DocCard>(`/documents/${id}`, fetcher);
-  const { data: log } = useSWR<DocActivity[]>(`/documents/${id}/activity`, fetcher);
+  const { data: log, mutate: mutateLog } = useSWR<DocActivity[]>(`/documents/${id}/activity`, fetcher);
+  const { data: route, mutate: mutateRoute } = useSWR<DocRoute>(`/documents/${id}/route`, fetcher);
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [confirmSubmit, setConfirmSubmit] = useState(false);
+  const [submitOpen, setSubmitOpen] = useState(false);
+  const [decision, setDecision] = useState<"approve" | "reject" | null>(null);
 
   if (!d) return <main className="px-4 pt-12"><p className="text-sm text-muted">Загрузка…</p></main>;
 
   // Версию кладут в черновик или в карточку, вернувшуюся на корректировку.
   const canUpload = d.canEdit || d.status === "rework";
+
+  function refresh() {
+    mutate();
+    mutateLog();
+    mutateRoute();
+  }
 
   async function upload(file: File) {
     setErr(null);
@@ -48,7 +59,7 @@ export default function DocCardPage() {
         body: file,   // сырое тело, не multipart: большой файл не должен лечь в память бэка целиком
       });
       if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error || "upload_failed");
-      mutate();
+      refresh();
     } catch (e) {
       const code = e instanceof Error ? e.message : "";
       setErr(code === "too_large" ? "Файл больше 100 МБ" : "Не удалось загрузить файл");
@@ -73,24 +84,7 @@ export default function DocCardPage() {
     URL.revokeObjectURL(url);
   }
 
-  async function submit() {
-    setConfirmSubmit(false);
-    setErr(null);
-    setBusy(true);
-    try {
-      await api(`/documents/${id}/submit`, { method: "POST" });
-      mutate();
-    } catch (e) {
-      const code = e instanceof Error ? e.message : "";
-      setErr(
-        code === "no_version" ? "Сначала загрузите файл документа" :
-        code === "note_required" ? "Для этого типа нужна пояснительная записка" :
-        "Не удалось отправить на согласование",
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
+  const remarksByStep = (stepId: string) => route?.remarks.filter((r) => r.stepId === stepId) ?? [];
 
   return (
     <main className="px-4 pt-12">
@@ -117,6 +111,68 @@ export default function DocCardPage() {
       </header>
 
       {err && <p className="mb-3 rounded-xl bg-danger/10 px-3 py-2 text-sm text-danger">{err}</p>}
+
+      {/* ── Решение по согласованию: показываем, только если очередь дошла до меня ── */}
+      {route?.canDecide && (
+        <section className="mb-6 rounded-2xl border border-accent/40 bg-accent/5 px-4 py-4">
+          <p className="mb-3 text-sm font-medium">Документ ждёт вашего решения</p>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              onClick={() => setDecision("approve")}
+              className="flex-1 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700"
+            >
+              ✓ Согласовать
+            </button>
+            <button
+              onClick={() => setDecision("reject")}
+              className="flex-1 rounded-xl bg-danger/90 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-danger"
+            >
+              ↩ Вернуть на корректировку
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* ── Маршрут согласования: цепочка людей и их решения ── */}
+      {route?.route && (
+        <section className="mb-6">
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Маршрут согласования</h2>
+            {route.route.iteration > 1 && <span className="text-xs text-muted">круг {route.route.iteration}</span>}
+          </div>
+          <div className="flex flex-col gap-3 rounded-2xl bg-surface px-4 py-4">
+            {route.steps.map((s) => {
+              const rem = remarksByStep(s.id);
+              return (
+                <div key={s.id} className="flex gap-3">
+                  <div className="mt-1 flex flex-col items-center">
+                    <span className={`h-2.5 w-2.5 rounded-full ${STEP_DOT[s.status]}`} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm">{s.assigneeName ?? "—"}</span>
+                      <span className={`shrink-0 text-xs ${s.status === "rejected" ? "text-danger" : s.status === "approved" ? "text-emerald-500" : s.status === "active" ? "text-accent" : "text-muted"}`}>
+                        {STEP_STATUS[s.status]}
+                      </span>
+                    </div>
+                    {s.decidedAt && (
+                      <div className="mt-0.5 text-xs text-muted">{new Date(s.decidedAt).toLocaleString("ru-RU")}</div>
+                    )}
+                    {rem.map((r) => (
+                      <div
+                        key={r.id}
+                        className={`mt-1.5 rounded-lg px-2.5 py-1.5 text-xs ${r.kind === "blocking" ? "bg-danger/10 text-danger" : "bg-surface-2 text-muted"}`}
+                      >
+                        <span className="font-medium">{r.kind === "blocking" ? "Замечание" : "Комментарий"}:</span> {r.text}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       <section className="mb-6">
         <div className="mb-2 flex items-center justify-between">
@@ -173,13 +229,13 @@ export default function DocCardPage() {
         )}
       </section>
 
-      {d.status === "draft" && d.canEdit && (
+      {d.canSubmit && (
         <button
-          onClick={() => setConfirmSubmit(true)}
+          onClick={() => setSubmitOpen(true)}
           disabled={busy || d.versions.length === 0}
           className="mb-6 w-full rounded-xl bg-accent px-4 py-3 text-sm font-medium text-white disabled:opacity-40 lg:w-auto lg:px-6"
         >
-          Отправить на согласование
+          {d.status === "rework" ? "Отправить повторно" : "Отправить на согласование"}
         </button>
       )}
 
@@ -196,15 +252,171 @@ export default function DocCardPage() {
         </div>
       </section>
 
-      {confirmSubmit && (
-        <ConfirmSheet
-          title="Отправить на согласование?"
-          message="Карточка получит реестровый номер, и править её будет уже нельзя — только загрузить новую версию."
-          confirmLabel="Отправить"
-          onConfirm={submit}
-          onCancel={() => setConfirmSubmit(false)}
+      {submitOpen && (
+        <SubmitSheet
+          docId={id}
+          rework={d.status === "rework"}
+          onClose={() => setSubmitOpen(false)}
+          onDone={() => { setSubmitOpen(false); refresh(); }}
+        />
+      )}
+
+      {decision && (
+        <DecisionSheet
+          docId={id}
+          mode={decision}
+          onClose={() => setDecision(null)}
+          onDone={() => { setDecision(null); refresh(); }}
         />
       )}
     </main>
+  );
+}
+
+// Отправка на согласование: выбор согласующих по порядку. Клик добавляет в конец
+// цепочки, повторный — убирает. Порядок клика = порядок согласования.
+function SubmitSheet({ docId, rework, onClose, onDone }: { docId: string; rework: boolean; onClose: () => void; onDone: () => void }) {
+  const { data: members } = useSWR<DocMember[]>("/documents/members", fetcher);
+  const [chain, setChain] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const nameOf = (uid: string) => members?.find((m) => m.id === uid)?.displayName ?? "—";
+  const toggle = (uid: string) =>
+    setChain((c) => (c.includes(uid) ? c.filter((x) => x !== uid) : [...c, uid]));
+
+  async function submit() {
+    setErr(null);
+    if (chain.length === 0) return setErr("Выберите хотя бы одного согласующего");
+    setBusy(true);
+    try {
+      await api(`/documents/${docId}/submit`, { method: "POST", body: JSON.stringify({ approvers: chain }) });
+      onDone();
+    } catch (e) {
+      const code = e instanceof Error ? e.message : "";
+      setErr(
+        code === "no_version" ? "Сначала загрузите файл документа" :
+        code === "note_required" ? "Для этого типа нужна пояснительная записка" :
+        code === "approvers_required" ? "Выберите согласующих" :
+        "Не удалось отправить на согласование",
+      );
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Sheet onClose={onClose} size="lg">
+      <h2 className="mb-1 text-lg font-semibold">{rework ? "Отправить повторно" : "На согласование"}</h2>
+      <p className="mb-4 text-sm text-muted">
+        Выберите согласующих по порядку — документ пойдёт по цепочке от первого к последнему.
+        {!rework && " Карточка получит реестровый номер, и править её будет уже нельзя."}
+      </p>
+
+      {chain.length > 0 && (
+        <div className="mb-3 flex flex-col gap-1.5">
+          {chain.map((uid, i) => (
+            <div key={uid} className="flex items-center gap-2 rounded-lg bg-accent/10 px-3 py-2 text-sm">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-medium text-white">{i + 1}</span>
+              <span className="min-w-0 flex-1 truncate">{nameOf(uid)}</span>
+              <button onClick={() => toggle(uid)} className="shrink-0 text-xs text-muted hover:text-danger">убрать</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <label className="text-xs text-muted">Участники пространства</label>
+      <div className="mb-4 mt-1 flex max-h-60 flex-col gap-1 overflow-y-auto">
+        {members?.filter((m) => !chain.includes(m.id)).map((m) => (
+          <button
+            key={m.id}
+            onClick={() => toggle(m.id)}
+            className="flex items-center justify-between rounded-lg bg-surface px-3 py-2 text-left text-sm transition hover:bg-surface-2"
+          >
+            <span className="truncate">{m.displayName}</span>
+            <span className="shrink-0 text-xs text-accent">+ добавить</span>
+          </button>
+        ))}
+        {members && members.filter((m) => !chain.includes(m.id)).length === 0 && (
+          <p className="px-1 py-2 text-xs text-muted">Все участники уже в цепочке.</p>
+        )}
+      </div>
+
+      {err && <p className="mb-3 text-sm text-danger">{err}</p>}
+
+      <div className="flex gap-2">
+        <button onClick={onClose} className="flex-1 rounded-xl bg-surface px-4 py-3 text-sm font-medium">Отмена</button>
+        <button
+          onClick={submit}
+          disabled={busy}
+          className="flex-1 rounded-xl bg-accent px-4 py-3 text-sm font-medium text-white disabled:opacity-40"
+        >
+          {busy ? "Отправляем…" : "Отправить"}
+        </button>
+      </div>
+    </Sheet>
+  );
+}
+
+// Решение согласующего. Возврат требует замечания (оно блокирует), согласование
+// разрешает необязательный комментарий (уйдёт в лист разногласий).
+function DecisionSheet({ docId, mode, onClose, onDone }: { docId: string; mode: "approve" | "reject"; onClose: () => void; onDone: () => void }) {
+  const [comment, setComment] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const reject = mode === "reject";
+
+  async function submit() {
+    setErr(null);
+    if (reject && !comment.trim()) return setErr("Опишите, что нужно исправить");
+    setBusy(true);
+    try {
+      await api(`/documents/${docId}/decision`, {
+        method: "POST",
+        body: JSON.stringify({ decision: mode, comment: comment.trim() || undefined }),
+      });
+      onDone();
+    } catch (e) {
+      const code = e instanceof Error ? e.message : "";
+      setErr(
+        code === "not_your_step" ? "Сейчас очередь не за вами" :
+        code === "remark_required" ? "Опишите, что нужно исправить" :
+        "Не удалось сохранить решение",
+      );
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Sheet onClose={onClose} size="md">
+      <h2 className="mb-1 text-lg font-semibold">{reject ? "Вернуть на корректировку" : "Согласовать документ"}</h2>
+      <p className="mb-4 text-sm text-muted">
+        {reject
+          ? "Замечание блокирует согласование — документ вернётся инициатору, круг начнётся заново после правки."
+          : "Можно приложить комментарий — он не блокирует согласование и попадёт в лист разногласий."}
+      </p>
+
+      <label className="text-xs text-muted">{reject ? "Замечание" : "Комментарий (необязательно)"}</label>
+      <textarea
+        autoFocus
+        value={comment}
+        onChange={(e) => setComment(e.target.value)}
+        rows={4}
+        placeholder={reject ? "Что нужно исправить" : "Например: согласовано при условии…"}
+        className="mb-3 mt-1 w-full resize-none rounded-xl bg-surface px-3 py-2.5 text-sm outline-none"
+      />
+
+      {err && <p className="mb-3 text-sm text-danger">{err}</p>}
+
+      <div className="flex gap-2">
+        <button onClick={onClose} className="flex-1 rounded-xl bg-surface px-4 py-3 text-sm font-medium">Отмена</button>
+        <button
+          onClick={submit}
+          disabled={busy}
+          className={`flex-1 rounded-xl px-4 py-3 text-sm font-medium text-white disabled:opacity-40 ${reject ? "bg-danger" : "bg-emerald-600"}`}
+        >
+          {busy ? "Сохраняем…" : reject ? "Вернуть" : "Согласовать"}
+        </button>
+      </div>
+    </Sheet>
   );
 }
