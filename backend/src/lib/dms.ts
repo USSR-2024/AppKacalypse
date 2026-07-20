@@ -65,8 +65,48 @@ export async function nextRegistryNumber(
 // Доступ
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Админ модуля = глава пространства. Видит и правит всё в своём ws. */
+/** Роль главы пространства (owner/admin). Дефолт прав модуля берётся отсюда. */
 export const isDocsAdmin = (wsRole: string) => wsRole === 'owner' || wsRole === 'admin';
+
+// ── Права модуля и фиче-флаг ─────────────────────────────────────────────────
+
+export interface DocPerms {
+  canCreate: boolean;    // заводить документы
+  canManage: boolean;    // «Настройки»: типы/группы/матрица/доступ
+  canViewAll: boolean;   // видеть ВСЕ документы пространства
+}
+
+// Кладём разрешённые действия в контекст запроса (резолвятся один раз в middleware).
+declare module 'hono' {
+  interface ContextVariableMap {
+    docPerms: DocPerms;
+  }
+}
+
+/**
+ * Права юзера в модуле. Строка в doc_member_perms ПЕРЕОПРЕДЕЛЯЕТ; нет строки — дефолт
+ * по роли воркспейса (глава — всё; участник — только создавать). Должность (кто
+ * согласует) живёт в org_units и здесь ни при чём — это измерение ДОСТУПА.
+ */
+export async function getDocPerms(workspaceId: string, userId: string, wsRole: string): Promise<DocPerms> {
+  const [row] = await db
+    .select({ canCreate: schema.docMemberPerms.canCreate, canManage: schema.docMemberPerms.canManage, canViewAll: schema.docMemberPerms.canViewAll })
+    .from(schema.docMemberPerms)
+    .where(and(eq(schema.docMemberPerms.workspaceId, workspaceId), eq(schema.docMemberPerms.userId, userId))).limit(1);
+  if (row) return row;
+  const admin = isDocsAdmin(wsRole);
+  return { canCreate: true, canManage: admin, canViewAll: admin };
+}
+
+/** Включён ли модуль в пространстве. Нет строки = включён (обратная совместимость). */
+export async function isFeatureEnabled(workspaceId: string, feature: string): Promise<boolean> {
+  const [row] = await db.select({ enabled: schema.workspaceFeatures.enabled })
+    .from(schema.workspaceFeatures)
+    .where(and(eq(schema.workspaceFeatures.workspaceId, workspaceId), eq(schema.workspaceFeatures.feature, feature))).limit(1);
+  return row ? row.enabled : true;
+}
+
+// ── Видимость документов ─────────────────────────────────────────────────────
 
 /** id документов, где юзер — согласующий (шаг маршрута любой итерации). */
 function approverDocIds(userId: string) {
@@ -78,11 +118,11 @@ function approverDocIds(userId: string) {
 }
 
 /**
- * Кто видит документ: инициатор (автор), ответственный, согласующий. Админ модуля — всё.
+ * Кто видит документ: инициатор (автор), ответственный, согласующий. canViewAll — всё.
  * Возвращает условие для WHERE или null, если ограничивать не надо.
  */
-export function visibilityCond(u: SessionClaims, wsRole: string): SQL | null {
-  if (isDocsAdmin(wsRole)) return null;
+export function visibilityCond(u: SessionClaims, canViewAll: boolean): SQL | null {
+  if (canViewAll) return null;
   return or(
     eq(doc.authorId, u.sub),
     eq(doc.ownerId, u.sub),
@@ -91,10 +131,10 @@ export function visibilityCond(u: SessionClaims, wsRole: string): SQL | null {
 }
 
 /** Правило доступа для одной карточки (когда условие в WHERE неудобно). */
-export async function canView(u: SessionClaims, wsRole: string, documentId: string): Promise<boolean> {
-  if (isDocsAdmin(wsRole)) return true;
+export async function canView(u: SessionClaims, canViewAll: boolean, documentId: string): Promise<boolean> {
+  if (canViewAll) return true;
   const [row] = await db.select({ id: doc.id }).from(doc)
-    .where(and(eq(doc.id, documentId), visibilityCond(u, wsRole)!)).limit(1);
+    .where(and(eq(doc.id, documentId), visibilityCond(u, canViewAll)!)).limit(1);
   return !!row;
 }
 

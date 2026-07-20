@@ -5,11 +5,11 @@ import useSWR from "swr";
 import { fetcher, api } from "@/lib/api";
 import { useWs, wsHref } from "@/lib/ws";
 import { Sheet } from "@/components/Sheet";
-import type { DocAdminGroup, DocAdminType, DocUnit, DocMember, DocMatrixRow, OrgUnitRole } from "@/lib/types";
+import type { DocAdminGroup, DocAdminType, DocUnit, DocMember, DocMatrixRow, OrgUnitRole, DocAccess } from "@/lib/types";
 
-// «Настройки» модуля документов: справочники, функциональные группы, матрица.
+// «Настройки» модуля документов: справочники, функциональные группы, матрица, доступ.
 // Всё редактируется в UI — «не лезть в код» (требование владельца). Только админ.
-type Tab = "types" | "groups" | "units" | "matrix";
+type Tab = "types" | "groups" | "units" | "matrix" | "access";
 
 const ROLE_LABEL: Record<OrgUnitRole, string> = { lead: "лид", member: "участник", deputy: "заместитель" };
 
@@ -32,6 +32,7 @@ export default function DocsSettingsPage() {
     { v: "groups", label: "Категории" },
     { v: "units", label: "Группы согласования" },
     { v: "matrix", label: "Матрица" },
+    { v: "access", label: "Доступ" },
   ];
 
   return (
@@ -55,7 +56,69 @@ export default function DocsSettingsPage() {
       {tab === "groups" && <GroupsSection />}
       {tab === "units" && <UnitsSection />}
       {tab === "matrix" && <MatrixSection />}
+      {tab === "access" && <AccessSection />}
     </main>
+  );
+}
+
+// ── Доступ: тумблер модуля + права участников ─────────────────────────────────
+function AccessSection() {
+  const { data, error, mutate } = useSWR<DocAccess>("/docs-admin/access", fetcher);
+  const ROLE: Record<string, string> = { owner: "владелец", admin: "админ", member: "участник" };
+
+  if (error) return <Empty>Управление доступом — только для главы пространства.</Empty>;
+  if (!data) return <p className="text-sm text-muted">Загрузка…</p>;
+
+  async function setFeature(enabled: boolean) {
+    await api("/docs-admin/access/feature", { method: "PUT", body: JSON.stringify({ feature: "documents", enabled }) });
+    mutate();
+  }
+  async function setPerm(userId: string, patch: Partial<{ canCreate: boolean; canManage: boolean; canViewAll: boolean }>) {
+    const m = data!.members.find((x) => x.userId === userId)!;
+    await api(`/docs-admin/access/member/${userId}`, {
+      method: "PUT",
+      body: JSON.stringify({ canCreate: m.canCreate, canManage: m.canManage, canViewAll: m.canViewAll, ...patch }),
+    });
+    mutate();
+  }
+  async function reset(userId: string) {
+    await api(`/docs-admin/access/member/${userId}`, { method: "DELETE" });
+    mutate();
+  }
+
+  return (
+    <section>
+      <div className="mb-4 flex items-center justify-between rounded-2xl bg-surface px-4 py-3">
+        <div>
+          <div className="font-medium">Модуль «Документы» включён</div>
+          <div className="text-xs text-muted">Выключишь — раздел пропадёт у всех в пространстве.</div>
+        </div>
+        <button
+          onClick={() => setFeature(!data.documentsEnabled)}
+          className={`relative h-6 w-11 shrink-0 rounded-full transition ${data.documentsEnabled ? "bg-accent" : "bg-surface-2"}`}
+        >
+          <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition ${data.documentsEnabled ? "left-[22px]" : "left-0.5"}`} />
+        </button>
+      </div>
+
+      <h2 className="mb-1 text-base font-semibold">Кто что может</h2>
+      <p className="mb-3 text-xs text-muted">По умолчанию: глава — всё, участник — только создавать. Отметки переопределяют дефолт.</p>
+      <div className="flex flex-col gap-2">
+        {data.members.map((m) => (
+          <div key={m.userId} className="rounded-2xl bg-surface px-4 py-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="min-w-0 truncate font-medium">{m.displayName} <span className="text-xs text-muted">· {ROLE[m.wsRole]}</span></span>
+              {m.isOverride && <button onClick={() => reset(m.userId)} className="shrink-0 text-xs text-muted hover:text-accent">сбросить</button>}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+              <label className="flex items-center gap-1.5"><input type="checkbox" checked={m.canCreate} onChange={(e) => setPerm(m.userId, { canCreate: e.target.checked })} /> создавать</label>
+              <label className="flex items-center gap-1.5"><input type="checkbox" checked={m.canManage} onChange={(e) => setPerm(m.userId, { canManage: e.target.checked })} /> администрировать</label>
+              <label className="flex items-center gap-1.5"><input type="checkbox" checked={m.canViewAll} onChange={(e) => setPerm(m.userId, { canViewAll: e.target.checked })} /> видеть все</label>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

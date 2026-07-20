@@ -793,3 +793,28 @@ export const documentActivity = pgTable('document_activity', {
   docIdx: index('document_activity_doc_idx').on(t.documentId, t.at),
   wsIdx: index('document_activity_ws_idx').on(t.workspaceId, t.at),
 }));
+
+// ── Права и фиче-флаги ────────────────────────────────────────────────────────
+
+// Фиче-флаг модуля НА ВОРКСПЕЙС: владелец пространства включает/выключает модули
+// (документы, оргструктура…). Нет строки = включено по умолчанию (обратная совместимость).
+export const workspaceFeatures = pgTable('workspace_features', {
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  feature: text('feature').notNull(),          // 'documents' | 'org_structure' | ...
+  enabled: boolean('enabled').notNull().default(true),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.workspaceId, t.feature] }),
+}));
+
+// Возможности пользователя в модуле «Документы». Нет строки = дефолт по роли воркспейса
+// (owner/admin — всё; member — только создавать). Строка ПЕРЕОПРЕДЕЛЯЕТ. Должность (кто
+// согласует) — это org_units, ОТДЕЛЬНОЕ измерение; здесь именно ПРАВА ДОСТУПА.
+export const docMemberPerms = pgTable('doc_member_perms', {
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  canCreate: boolean('can_create').notNull().default(true),     // заводить документы (инициировать)
+  canManage: boolean('can_manage').notNull().default(false),    // «Настройки»: типы, группы, матрица
+  canViewAll: boolean('can_view_all').notNull().default(false), // видеть ВСЕ документы (делопроизводитель)
+}, (t) => ({
+  pk: primaryKey({ columns: [t.workspaceId, t.userId] }),
+}));

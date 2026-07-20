@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { db, schema } from '../db/index.js';
 import { requireAuth } from '../lib/auth-middleware.js';
 import { requireWorkspace } from '../lib/workspace-middleware.js';
-import { nextRegistryNumber, visibilityCond, canView, isDocsAdmin, logDoc, versionKey, dsKey } from '../lib/dms.js';
+import { nextRegistryNumber, visibilityCond, canView, getDocPerms, isFeatureEnabled, logDoc, versionKey, dsKey } from '../lib/dms.js';
 import { putVersion, getVersionStream } from '../lib/dms-storage.js';
 import { BLANK_DOCX_B64 } from '../lib/blank-docx.js';
 import { startRoute, activeStepForUser, approveStep, rejectStep, assembleMatrix, type RouteStepInput } from '../lib/route-engine.js';
@@ -30,6 +30,13 @@ async function actorDisplayName(userId: string): Promise<string> {
 
 export const documentRoutes = new Hono();
 documentRoutes.use('*', requireAuth, requireWorkspace);
+// Фиче-флаг модуля + права юзера (резолвим один раз, кладём в контекст).
+documentRoutes.use('*', async (c, next) => {
+  const w = c.get('workspace');
+  if (!(await isFeatureEnabled(w.id, 'documents'))) return c.json({ error: 'module_disabled' }, 403);
+  c.set('docPerms', await getDocPerms(w.id, c.get('user').sub, w.role));
+  await next();
+});
 
 const MAX_FILE = 100 * 1024 * 1024;   // 100 МБ — договор столько не весит; защита от заливки видео
 
@@ -39,7 +46,7 @@ documentRoutes.get('/', async (c) => {
   const w = c.get('workspace');
   const u = c.get('user');
   const conds = [eq(doc.workspaceId, w.id)];
-  const vis = visibilityCond(u, w.role);
+  const vis = visibilityCond(u, c.get('docPerms').canViewAll);
   if (vis) conds.push(vis);
 
   const status = z.enum(['draft', 'on_approval', 'rework', 'approved', 'on_signing', 'signed', 'active', 'expired', 'terminated', 'archived', 'cancelled'])
@@ -143,7 +150,7 @@ documentRoutes.get('/:id', async (c) => {
     .leftJoin(schema.users, eq(schema.users.id, doc.ownerId))
     .where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
   if (!row) return c.json({ error: 'not_found' }, 404);
-  if (!(await canView(u, w.role, id))) return c.json({ error: 'forbidden' }, 403);
+  if (!(await canView(u, c.get('docPerms').canViewAll, id))) return c.json({ error: 'forbidden' }, 403);
 
   const versions = await db
     .select({
@@ -159,11 +166,12 @@ documentRoutes.get('/:id', async (c) => {
 
   // Черновик правит только его владелец (или админ модуля); дальше карточка read-only,
   // менять её содержимое можно лишь загрузкой новой версии.
-  const mine = isDocsAdmin(w.role) || row.ownerId === u.sub || row.authorId === u.sub;
+  const perms = c.get('docPerms');
+  const mine = perms.canManage || row.ownerId === u.sub || row.authorId === u.sub;
   const canEdit = row.status === 'draft' && mine;
   // Отправить на согласование может владелец карточки из черновика или из корректировки.
   const canSubmit = (row.status === 'draft' || row.status === 'rework') && mine;
-  return c.json({ ...row, versions, canEdit, canSubmit, canManage: isDocsAdmin(w.role) });
+  return c.json({ ...row, versions, canEdit, canSubmit, canManage: perms.canManage });
 });
 
 // ── Создание ─────────────────────────────────────────────────────────────────
@@ -182,6 +190,7 @@ const createSchema = z.object({
 documentRoutes.post('/', async (c) => {
   const w = c.get('workspace');
   const u = c.get('user');
+  if (!c.get('docPerms').canCreate) return c.json({ error: 'no_create_permission' }, 403);
   const p = createSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!p.success) return c.json({ error: 'bad_request', details: p.error.issues }, 400);
 
@@ -232,7 +241,7 @@ documentRoutes.patch('/:id', async (c) => {
 
   const [row] = await db.select().from(doc).where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
   if (!row) return c.json({ error: 'not_found' }, 404);
-  if (!isDocsAdmin(w.role) && row.ownerId !== u.sub && row.authorId !== u.sub) return c.json({ error: 'forbidden' }, 403);
+  if (!c.get('docPerms').canManage && row.ownerId !== u.sub && row.authorId !== u.sub) return c.json({ error: 'forbidden' }, 403);
   // Ушедшую на согласование карточку не правим: у согласующих на руках её содержимое.
   if (row.status !== 'draft') return c.json({ error: 'not_draft' }, 409);
 
@@ -275,7 +284,7 @@ documentRoutes.put('/:id/versions', async (c) => {
 
   const [row] = await db.select().from(doc).where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
   if (!row) return c.json({ error: 'not_found' }, 404);
-  if (!isDocsAdmin(w.role) && row.ownerId !== u.sub && row.authorId !== u.sub) return c.json({ error: 'forbidden' }, 403);
+  if (!c.get('docPerms').canManage && row.ownerId !== u.sub && row.authorId !== u.sub) return c.json({ error: 'forbidden' }, 403);
   // Версию кладём в черновик или в карточку, вернувшуюся на корректировку.
   if (row.status !== 'draft' && row.status !== 'rework') return c.json({ error: 'bad_status' }, 409);
 
@@ -329,7 +338,7 @@ documentRoutes.post('/:id/versions/blank', async (c) => {
   const [row] = await db.select({ status: doc.status, ownerId: doc.ownerId, authorId: doc.authorId })
     .from(doc).where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
   if (!row) return c.json({ error: 'not_found' }, 404);
-  if (!isDocsAdmin(w.role) && row.ownerId !== u.sub && row.authorId !== u.sub) return c.json({ error: 'forbidden' }, 403);
+  if (!c.get('docPerms').canManage && row.ownerId !== u.sub && row.authorId !== u.sub) return c.json({ error: 'forbidden' }, 403);
   if (row.status !== 'draft') return c.json({ error: 'not_draft' }, 409);
 
   const [existing] = await db.select({ id: ver.id }).from(ver).where(eq(ver.documentId, id)).limit(1);
@@ -362,7 +371,7 @@ documentRoutes.get('/:id/versions/:versionId/file', async (c) => {
   const w = c.get('workspace');
   const u = c.get('user');
   const id = c.req.param('id')!;
-  if (!(await canView(u, w.role, id))) return c.json({ error: 'forbidden' }, 403);
+  if (!(await canView(u, c.get('docPerms').canViewAll, id))) return c.json({ error: 'forbidden' }, 403);
 
   const [v] = await db.select({ key: ver.objectKey, fileName: ver.fileName, mime: ver.mimeType })
     .from(ver).where(and(eq(ver.id, c.req.param('versionId')!), eq(ver.documentId, id))).limit(1);
@@ -386,7 +395,7 @@ documentRoutes.get('/:id/route-preview', async (c) => {
   const w = c.get('workspace');
   const u = c.get('user');
   const id = c.req.param('id')!;
-  if (!(await canView(u, w.role, id))) return c.json({ error: 'forbidden' }, 403);
+  if (!(await canView(u, c.get('docPerms').canViewAll, id))) return c.json({ error: 'forbidden' }, 403);
   const [row] = await db.select({ typeId: doc.typeId }).from(doc).where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
   if (!row) return c.json({ error: 'not_found' }, 404);
 
@@ -413,7 +422,7 @@ documentRoutes.post('/:id/submit', async (c) => {
 
   const [row] = await db.select().from(doc).where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
   if (!row) return c.json({ error: 'not_found' }, 404);
-  if (!isDocsAdmin(w.role) && row.ownerId !== u.sub && row.authorId !== u.sub) return c.json({ error: 'forbidden' }, 403);
+  if (!c.get('docPerms').canManage && row.ownerId !== u.sub && row.authorId !== u.sub) return c.json({ error: 'forbidden' }, 403);
   if (row.status !== 'draft' && row.status !== 'rework') return c.json({ error: 'not_submittable' }, 409);
   if (!row.currentVersionId) return c.json({ error: 'no_version' }, 409);   // согласовывать нечего
 
@@ -480,7 +489,7 @@ documentRoutes.get('/:id/route', async (c) => {
   const w = c.get('workspace');
   const u = c.get('user');
   const id = c.req.param('id')!;
-  if (!(await canView(u, w.role, id))) return c.json({ error: 'forbidden' }, 403);
+  if (!(await canView(u, c.get('docPerms').canViewAll, id))) return c.json({ error: 'forbidden' }, 403);
 
   // Последний (текущий) круг согласования.
   const [route] = await db
@@ -593,7 +602,7 @@ documentRoutes.get('/:id/editor-config', async (c) => {
   const w = c.get('workspace');
   const u = c.get('user');
   const id = c.req.param('id')!;
-  if (!(await canView(u, w.role, id))) return c.json({ error: 'forbidden' }, 403);
+  if (!(await canView(u, c.get('docPerms').canViewAll, id))) return c.json({ error: 'forbidden' }, 403);
 
   const [row] = await db.select({
     id: doc.id, title: doc.title, status: doc.status, authorId: doc.authorId, ownerId: doc.ownerId,
@@ -613,7 +622,7 @@ documentRoutes.get('/:id/editor-config', async (c) => {
   const rel = await approverRelation(id, u.sub);
   const access = resolveAccess({
     status: row.status,
-    isAuthor: isDocsAdmin(w.role) || row.authorId === u.sub || row.ownerId === u.sub,
+    isAuthor: c.get('docPerms').canManage || row.authorId === u.sub || row.ownerId === u.sub,
     activeApprover: rel.active,
     pastApprover: rel.past,
   });
@@ -667,7 +676,7 @@ documentRoutes.post('/:id/forcesave', async (c) => {
   const w = c.get('workspace');
   const u = c.get('user');
   const id = c.req.param('id')!;
-  if (!(await canView(u, w.role, id))) return c.json({ error: 'forbidden' }, 403);
+  if (!(await canView(u, c.get('docPerms').canViewAll, id))) return c.json({ error: 'forbidden' }, 403);
 
   const [row] = await db.select({ currentVersionId: doc.currentVersionId }).from(doc)
     .where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
@@ -686,7 +695,7 @@ documentRoutes.get('/:id/history', async (c) => {
   const w = c.get('workspace');
   const u = c.get('user');
   const id = c.req.param('id')!;
-  if (!(await canView(u, w.role, id))) return c.json({ error: 'forbidden' }, 403);
+  if (!(await canView(u, c.get('docPerms').canViewAll, id))) return c.json({ error: 'forbidden' }, 403);
 
   const versions = await db.select({
     versionNo: ver.versionNo, dsKey: ver.dsKey, fileHash: ver.fileHash, createdAt: ver.createdAt,
@@ -714,7 +723,7 @@ documentRoutes.get('/:id/history/:versionNo', async (c) => {
   const u = c.get('user');
   const id = c.req.param('id')!;
   const versionNo = Number(c.req.param('versionNo'));
-  if (!(await canView(u, w.role, id))) return c.json({ error: 'forbidden' }, 403);
+  if (!(await canView(u, c.get('docPerms').canViewAll, id))) return c.json({ error: 'forbidden' }, 403);
   if (!Number.isInteger(versionNo)) return c.json({ error: 'bad_request' }, 400);
 
   const rows = await db.select({
@@ -744,7 +753,7 @@ documentRoutes.get('/:id/activity', async (c) => {
   const w = c.get('workspace');
   const u = c.get('user');
   const id = c.req.param('id')!;
-  if (!(await canView(u, w.role, id))) return c.json({ error: 'forbidden' }, 403);
+  if (!(await canView(u, c.get('docPerms').canViewAll, id))) return c.json({ error: 'forbidden' }, 403);
   const rows = await db
     .select({
       id: schema.documentActivity.id, entity: schema.documentActivity.entity,

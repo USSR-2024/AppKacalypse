@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { db, schema } from '../db/index.js';
 import { requireAuth } from '../lib/auth-middleware.js';
 import { requireWorkspace } from '../lib/workspace-middleware.js';
-import { isDocsAdmin, logDoc } from '../lib/dms.js';
+import { isDocsAdmin, getDocPerms, isFeatureEnabled, logDoc } from '../lib/dms.js';
 
 // Админка модуля «Документы» (раздел «Настройки»): справочники типов/групп,
 // функциональные группы согласования и матрица. Всё — ДАННЫЕ, редактируемые в UI
@@ -16,12 +16,18 @@ const t = schema.docTypes;
 const ou = schema.orgUnits;
 const oum = schema.orgUnitMembers;
 const am = schema.approvalMatrix;
+const wm = schema.workspaceMembers;
+const wf = schema.workspaceFeatures;
+const dmp = schema.docMemberPerms;
 
 export const docsAdminRoutes = new Hono();
 docsAdminRoutes.use('*', requireAuth, requireWorkspace);
-// Единый гейт: раздел «Настройки» — только глава пространства (owner/admin).
+// Гейт «Настроек» — право администрировать модуль (canManage). Фиче-флаг здесь НЕ
+// проверяем намеренно: иначе, выключив модуль, владелец не смог бы включить обратно.
 docsAdminRoutes.use('*', async (c, next) => {
-  if (!isDocsAdmin(c.get('workspace').role)) return c.json({ error: 'forbidden' }, 403);
+  const w = c.get('workspace');
+  const perms = await getDocPerms(w.id, c.get('user').sub, w.role);
+  if (!perms.canManage) return c.json({ error: 'forbidden' }, 403);
   await next();
 });
 
@@ -254,5 +260,71 @@ docsAdminRoutes.put('/matrix/:typeId', async (c) => {
     }
     await logDoc(tx, { workspaceId: w.id, entity: 'matrix', entityId: typeId, actorId: u.sub, action: 'edited', payload: { rows: p.data.rows.length } });
   });
+  return c.json({ ok: true });
+});
+
+// ── Доступ: фиче-флаг модуля + права участников ──────────────────────────────
+// Управление доступом = действие главы пространства (owner/admin), не любого canManage
+// (иначе тот, кому дали «администрировать», выдал бы себе всё). Должность (кто согласует)
+// — это org_units; здесь ПРАВА ДОСТУПА, ортогональное измерение.
+
+docsAdminRoutes.get('/access', async (c) => {
+  const w = c.get('workspace');
+  if (!isDocsAdmin(w.role)) return c.json({ error: 'forbidden' }, 403);
+  const members = await db
+    .select({ userId: wm.userId, wsRole: wm.role, displayName: schema.users.displayName })
+    .from(wm).innerJoin(schema.users, eq(schema.users.id, wm.userId))
+    .where(and(eq(wm.workspaceId, w.id), eq(wm.status, 'active')))
+    .orderBy(asc(schema.users.displayName));
+  const overrides = await db.select({ userId: dmp.userId, canCreate: dmp.canCreate, canManage: dmp.canManage, canViewAll: dmp.canViewAll })
+    .from(dmp).where(eq(dmp.workspaceId, w.id));
+  const byUser = new Map(overrides.map((o) => [o.userId, o]));
+  return c.json({
+    documentsEnabled: await isFeatureEnabled(w.id, 'documents'),
+    members: members.map((m) => {
+      const o = byUser.get(m.userId);
+      const admin = m.wsRole === 'owner' || m.wsRole === 'admin';
+      return {
+        userId: m.userId, displayName: m.displayName, wsRole: m.wsRole,
+        canCreate: o?.canCreate ?? true,
+        canManage: o?.canManage ?? admin,
+        canViewAll: o?.canViewAll ?? admin,
+        isOverride: !!o,
+      };
+    }),
+  });
+});
+
+// Включить/выключить модуль в пространстве.
+docsAdminRoutes.put('/access/feature', async (c) => {
+  const w = c.get('workspace');
+  if (!isDocsAdmin(w.role)) return c.json({ error: 'forbidden' }, 403);
+  const p = z.object({ feature: z.string().default('documents'), enabled: z.boolean() }).safeParse(await c.req.json().catch(() => ({})));
+  if (!p.success) return c.json({ error: 'bad_request' }, 400);
+  await db.insert(wf).values({ workspaceId: w.id, feature: p.data.feature, enabled: p.data.enabled })
+    .onConflictDoUpdate({ target: [wf.workspaceId, wf.feature], set: { enabled: p.data.enabled } });
+  return c.json({ ok: true });
+});
+
+// Задать права участника (переопределение дефолта по роли).
+docsAdminRoutes.put('/access/member/:userId', async (c) => {
+  const w = c.get('workspace');
+  if (!isDocsAdmin(w.role)) return c.json({ error: 'forbidden' }, 403);
+  const userId = c.req.param('userId');
+  const p = z.object({ canCreate: z.boolean(), canManage: z.boolean(), canViewAll: z.boolean() }).safeParse(await c.req.json().catch(() => ({})));
+  if (!p.success) return c.json({ error: 'bad_request' }, 400);
+  const [mem] = await db.select({ id: wm.userId }).from(wm)
+    .where(and(eq(wm.workspaceId, w.id), eq(wm.userId, userId), eq(wm.status, 'active'))).limit(1);
+  if (!mem) return c.json({ error: 'not_member' }, 400);
+  await db.insert(dmp).values({ workspaceId: w.id, userId, ...p.data })
+    .onConflictDoUpdate({ target: [dmp.workspaceId, dmp.userId], set: p.data });
+  return c.json({ ok: true });
+});
+
+// Сбросить права участника к дефолту по роли (удалить переопределение).
+docsAdminRoutes.delete('/access/member/:userId', async (c) => {
+  const w = c.get('workspace');
+  if (!isDocsAdmin(w.role)) return c.json({ error: 'forbidden' }, 403);
+  await db.delete(dmp).where(and(eq(dmp.workspaceId, w.id), eq(dmp.userId, c.req.param('userId'))));
   return c.json({ ok: true });
 });

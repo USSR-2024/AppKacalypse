@@ -14,8 +14,19 @@ export default function DocsPage() {
   const router = useRouter();
   const [sheet, setSheet] = useState(false);
   const [filter, setFilter] = useState<string>("");
-  const { data, mutate } = useSWR<DocRow[]>(`/documents${filter ? `?status=${filter}` : ""}`, fetcher);
+  const { data, mutate, error } = useSWR<DocRow[]>(`/documents${filter ? `?status=${filter}` : ""}`, fetcher);
   const { data: inbox } = useSWR<DocInboxItem[]>("/documents/inbox", fetcher);
+  const disabled = error instanceof Error && error.message === "module_disabled";
+
+  if (disabled) return (
+    <main className="px-4 pt-12">
+      <h1 className="text-2xl font-semibold">Документы</h1>
+      <p className="mt-3 rounded-2xl bg-surface px-4 py-3 text-sm text-muted">
+        Модуль отключён администратором пространства. Включить можно в{" "}
+        <button onClick={() => router.push(wsHref(ws, "/docs/settings"))} className="text-accent">Настройках → Доступ</button>.
+      </p>
+    </main>
+  );
 
   const dl = "ru-RU";
   const tabs: { v: string; label: string }[] = [

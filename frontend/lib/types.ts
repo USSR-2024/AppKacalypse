@@ -319,6 +319,21 @@ export interface DocMatrixRow {
   slaDays: number | null;
 }
 
+export interface DocAccessMember {
+  userId: string;
+  displayName: string;
+  wsRole: "owner" | "admin" | "member";
+  canCreate: boolean;
+  canManage: boolean;
+  canViewAll: boolean;
+  isOverride: boolean;
+}
+
+export interface DocAccess {
+  documentsEnabled: boolean;
+  members: DocAccessMember[];
+}
+
 export interface DocPreviewRow {
   unitId: string;
   unitName: string;
