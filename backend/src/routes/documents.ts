@@ -8,6 +8,7 @@ import { requireAuth } from '../lib/auth-middleware.js';
 import { requireWorkspace } from '../lib/workspace-middleware.js';
 import { nextRegistryNumber, visibilityCond, canView, isDocsAdmin, logDoc, versionKey, dsKey } from '../lib/dms.js';
 import { putVersion, getVersionStream } from '../lib/dms-storage.js';
+import { BLANK_DOCX_B64 } from '../lib/blank-docx.js';
 import { startRoute, activeStepFor, approveStep, rejectStep, type ApproverInput } from '../lib/route-engine.js';
 import { notifyApprovalStep, notifyApprovalDecision } from '../lib/notify.js';
 import { env } from '../lib/env.js';
@@ -316,6 +317,44 @@ documentRoutes.put('/:id/versions', async (c) => {
     console.error('version upload failed', e);
     return c.json({ error: 'upload_failed' }, 502);
   }
+});
+
+// Создать ПУСТУЮ версию (чистый docx) — чтобы начать документ прямо в приложении,
+// без готового файла. Дальше открывается в редакторе. Только на свежей карточке-черновике.
+documentRoutes.post('/:id/versions/blank', async (c) => {
+  const w = c.get('workspace');
+  const u = c.get('user');
+  const id = c.req.param('id')!;
+
+  const [row] = await db.select({ status: doc.status, ownerId: doc.ownerId, authorId: doc.authorId })
+    .from(doc).where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  if (!isDocsAdmin(w.role) && row.ownerId !== u.sub && row.authorId !== u.sub) return c.json({ error: 'forbidden' }, 403);
+  if (row.status !== 'draft') return c.json({ error: 'not_draft' }, 409);
+
+  const [existing] = await db.select({ id: ver.id }).from(ver).where(eq(ver.documentId, id)).limit(1);
+  if (existing) return c.json({ error: 'has_versions' }, 409);   // пустой док заводят только на чистой карточке
+
+  const buf = Buffer.from(BLANK_DOCX_B64, 'base64');
+  const mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  const fileName = 'Документ.docx';
+  const key = versionKey(id, 1, '.docx');
+
+  const created = await db.transaction(async (tx) => {
+    const { hash, size } = await putVersion(key, buf, mime);
+    const [v] = await tx.insert(ver).values({
+      documentId: id, versionNo: 1, objectKey: key, fileName, fileSize: size,
+      fileHash: hash, mimeType: mime, authorId: u.sub, comment: 'Создан пустой документ',
+      dsKey: dsKey(id, 1, hash),
+    }).returning({ id: ver.id, versionNo: ver.versionNo });
+    await tx.update(doc).set({ currentVersionId: v!.id, updatedAt: new Date() }).where(eq(doc.id, id));
+    await logDoc(tx, {
+      workspaceId: w.id, documentId: id, entity: 'version', entityId: v!.id,
+      actorId: u.sub, action: 'version_saved', payload: { versionNo: 1, blank: true },
+    });
+    return v!;
+  });
+  return c.json(created, 201);
 });
 
 // Скачать версию. Файлы отдаёт только бэкенд, проверив права: бакет не публичный.

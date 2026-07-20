@@ -109,12 +109,17 @@ export default function DocsPage() {
         ))}
       </div>
 
-      {sheet && <CreateSheet onClose={() => setSheet(false)} onCreated={(id) => { mutate(); router.push(wsHref(ws, `/docs/${id}`)); }} />}
+      {sheet && (
+        <CreateSheet
+          onClose={() => setSheet(false)}
+          onCreated={(id, edit) => { mutate(); router.push(wsHref(ws, edit ? `/docs/${id}/edit` : `/docs/${id}`)); }}
+        />
+      )}
     </main>
   );
 }
 
-function CreateSheet({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
+function CreateSheet({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string, edit?: boolean) => void }) {
   const { data: types } = useSWR<DocType[]>("/documents/types", fetcher);
   const [title, setTitle] = useState("");
   const [typeId, setTypeId] = useState("");
@@ -124,7 +129,9 @@ function CreateSheet({ onClose, onCreated }: { onClose: () => void; onCreated: (
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  async function submit() {
+  // blank=true — сразу создаём пустой docx и открываем редактор (писать в приложении);
+  // blank=false — просто черновик, файл приложат/загрузят в карточке.
+  async function submit(blank: boolean) {
     setErr(null);
     if (!title.trim()) return setErr("Укажите название");
     if (!typeId) return setErr("Выберите тип документа");
@@ -141,7 +148,8 @@ function CreateSheet({ onClose, onCreated }: { onClose: () => void; onCreated: (
           priorityReason: priority === "critical" ? reason.trim() : undefined,
         }),
       });
-      onCreated(d.id);
+      if (blank) await api(`/documents/${d.id}/versions/blank`, { method: "POST" });
+      onCreated(d.id, blank);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Не удалось создать");
       setBusy(false);
@@ -220,17 +228,26 @@ function CreateSheet({ onClose, onCreated }: { onClose: () => void; onCreated: (
 
       {err && <p className="mb-3 text-sm text-danger">{err}</p>}
 
-      <div className="flex gap-2">
-        <button onClick={onClose} className="flex-1 rounded-xl bg-surface px-4 py-3 text-sm font-medium">
-          Отмена
-        </button>
+      <div className="flex flex-col gap-2">
         <button
-          onClick={submit}
+          onClick={() => submit(true)}
           disabled={busy}
-          className="flex-1 rounded-xl bg-accent px-4 py-3 text-sm font-medium text-white disabled:opacity-40"
+          className="w-full rounded-xl bg-accent px-4 py-3 text-sm font-medium text-white disabled:opacity-40"
         >
-          {busy ? "Создаём…" : "Создать черновик"}
+          {busy ? "Создаём…" : "✎ Создать и писать в редакторе"}
         </button>
+        <div className="flex gap-2">
+          <button onClick={onClose} className="flex-1 rounded-xl bg-surface px-4 py-3 text-sm font-medium">
+            Отмена
+          </button>
+          <button
+            onClick={() => submit(false)}
+            disabled={busy}
+            className="flex-1 rounded-xl bg-surface px-4 py-3 text-sm font-medium disabled:opacity-40"
+          >
+            Черновик, приложу файл
+          </button>
+        </div>
       </div>
     </Sheet>
   );

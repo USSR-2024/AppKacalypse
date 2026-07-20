@@ -1,4 +1,5 @@
 "use client";
+import { useRef } from "react";
 import { useBackClose } from "@/lib/useBackClose";
 
 // Общая оболочка всех модалок. Одна и та же вещь ведёт себя по-разному:
@@ -32,10 +33,16 @@ export function Sheet({
 
   const width = { sm: "lg:max-w-sm", md: "lg:max-w-md", lg: "lg:max-w-lg" }[size];
 
+  // Закрывать только по НАСТОЯЩЕМУ клику мимо: и нажатие, и отпускание — на фоне.
+  // Иначе выделение текста в поле, отпущенное на затемнении, роняет модалку
+  // (click срабатывает на общем предке = фон) и стирает всё введённое.
+  const downOnBackdrop = useRef(false);
+
   return (
     <div
       className={`fixed inset-0 ${z} flex flex-col justify-end bg-black/50 lg:items-center lg:justify-center`}
-      onClick={onClose}
+      onMouseDown={(e) => { downOnBackdrop.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && downOnBackdrop.current) onClose(); }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
