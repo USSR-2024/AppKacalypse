@@ -43,7 +43,29 @@ services:
       BACKEND_URL: http://backend:8081
     networks: [default]
 
+  # ONLYOFFICE Document Server — редактор документов (модуль «Документы»).
+  # Браузер грузит api.js и держит WebSocket напрямую с DS через docs.appka.space
+  # (Caddy → akc-docs:80); бэкенд ходит в DS по внутреннему имени за Command/Convert
+  # Service. Секрет JWT — в infra/ds.env (НЕ в git; общий с backend/.env DS_JWT_SECRET).
+  documentserver:
+    image: onlyoffice/documentserver:9.4   # тег зафиксирован (ТЗ §4.2): :latest ломает перенос
+    container_name: akc-docs
+    restart: unless-stopped
+    env_file: ./infra/ds.env
+    volumes:
+      - ds_data:/var/www/onlyoffice/Data
+      - ds_logs:/var/log/onlyoffice
+      - ds_cache:/var/lib/onlyoffice/documentserver/App_Data/cache/files
+    ports:
+      - "127.0.0.1:8082:80"   # loopback: наружу отдаёт только Caddy по HTTPS
+    networks: [default]
+
 networks:
   default:
     external: true
     name: appkacalypse_default
+
+volumes:
+  ds_data: { name: ds_data }
+  ds_logs: { name: ds_logs }
+  ds_cache: { name: ds_cache }

@@ -10,6 +10,8 @@ google-calendar-credentials.json
 # Конфиги с ключами LiveKit — в репо только *.example, реальные живут на 158
 services/livekit/livekit.yaml
 services/recording/egress.yaml
+# Секрет JWT для ONLYOFFICE Document Server — реальный живёт на 158
+infra/ds.env
 
 # Данные сервисов
 postgres-data/
