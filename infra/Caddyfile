@@ -25,6 +25,13 @@ meet.appka.space {
 	reverse_proxy host.docker.internal:7880
 }
 
+# ONLYOFFICE Document Server: браузер грузит api.js и держит WebSocket совместного
+# редактирования напрямую с DS (минуя backend). DS — контейнер akc-docs в этой же
+# сети, слушает :80. Активировать ПОСЛЕ DNS docs.appka.space → 158.255.0.82.
+docs.appka.space {
+	reverse_proxy akc-docs:80
+}
+
 # Локально / без домена — отдаём по IP с internal-сертификатом.
 # Закомментируй блок выше и раскомментируй ниже для dev:
 # :443 {

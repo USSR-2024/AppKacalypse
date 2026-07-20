@@ -6,7 +6,7 @@ import { fetcher, api } from "@/lib/api";
 import { useAuth } from "@/lib/store";
 import { useWs, wsHref } from "@/lib/ws";
 import { Sheet } from "@/components/Sheet";
-import { DOC_PRIORITY, StatusChip, STEP_STATUS, STEP_DOT, fileSize } from "@/lib/docStrings";
+import { DOC_PRIORITY, StatusChip, STEP_STATUS, STEP_DOT, fileSize, isOfficeDoc } from "@/lib/docStrings";
 import type { DocCard, DocActivity, DocRoute, DocMember } from "@/lib/types";
 
 // Человеческие подписи событий журнала: в БД лежат коды (created, version_saved…).
@@ -175,25 +175,35 @@ export default function DocCardPage() {
       )}
 
       <section className="mb-6">
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex items-center justify-between gap-2">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Версии</h2>
-          {canUpload && (
-            <>
+          <div className="flex items-center gap-2">
+            {d.currentVersionId && isOfficeDoc(d.versions.find((v) => v.id === d.currentVersionId)?.fileName) && (
               <button
-                onClick={() => fileRef.current?.click()}
-                disabled={busy}
-                className="rounded-lg bg-surface px-3 py-1.5 text-xs text-muted transition hover:text-text disabled:opacity-40"
+                onClick={() => router.push(wsHref(ws, `/docs/${id}/edit`))}
+                className="rounded-lg bg-accent/10 px-3 py-1.5 text-xs text-accent transition hover:bg-accent/20"
               >
-                {busy ? "Загрузка…" : "↑ Загрузить версию"}
+                ✎ Открыть в редакторе
               </button>
-              <input
-                ref={fileRef}
-                type="file"
-                className="hidden"
-                onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
-              />
-            </>
-          )}
+            )}
+            {canUpload && (
+              <>
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  disabled={busy}
+                  className="rounded-lg bg-surface px-3 py-1.5 text-xs text-muted transition hover:text-text disabled:opacity-40"
+                >
+                  {busy ? "Загрузка…" : "↑ Загрузить версию"}
+                </button>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
+                />
+              </>
+            )}
+          </div>
         </div>
 
         {d.versions.length === 0 ? (

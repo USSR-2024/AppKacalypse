@@ -29,6 +29,14 @@ export async function getVersionStream(key: string): Promise<Readable> {
   return r.Body as Readable;
 }
 
+/** Файл целиком в память + Content-Length. DS плохо переваривает chunked без длины (ТЗ §4.7),
+ *  документы мелкие → буфер безопасен. */
+export async function getVersionBuffer(key: string): Promise<{ body: Buffer; contentType: string }> {
+  const r = await s3.send(new GetObjectCommand({ Bucket: env.S3_DOCS_BUCKET, Key: key }));
+  const body = Buffer.from(await (r.Body as Readable & { transformToByteArray?: () => Promise<Uint8Array> }).transformToByteArray!());
+  return { body, contentType: r.ContentType || 'application/octet-stream' };
+}
+
 /** Только для отката незавершённой загрузки: подписанный оригинал удалить не даст Object Lock. */
 export async function deleteObject(key: string): Promise<void> {
   await s3.send(new DeleteObjectCommand({ Bucket: env.S3_DOCS_BUCKET, Key: key }));

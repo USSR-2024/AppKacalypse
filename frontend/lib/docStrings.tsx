@@ -64,6 +64,10 @@ export const STEP_DOT: Record<StepStatus, string> = {
   skipped: "bg-surface-2",
 };
 
+// Форматы, которые открывает ONLYOFFICE (иначе кнопки редактора нет).
+const OFFICE_EXT = /\.(docx?|odt|rtf|txt|xlsx?|ods|csv|pptx?|odp)$/i;
+export const isOfficeDoc = (fileName?: string): boolean => !!fileName && OFFICE_EXT.test(fileName);
+
 export function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} Б`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} КБ`;

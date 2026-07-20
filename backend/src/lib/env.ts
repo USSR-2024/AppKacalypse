@@ -40,6 +40,16 @@ const schema = z.object({
   S3_SECRET_KEY: z.string().default(''),
   // Endpoint MinIO, который передаётся ВНУТРЬ egress-запроса (egress host-net → 127.0.0.1:9000).
   S3_EGRESS_ENDPOINT: z.string().default('http://127.0.0.1:9000'),
+
+  // ONLYOFFICE Document Server. DS_JWT_SECRET общий с контейнером DS (подпись конфига,
+  // проверка колбэков). Пусто = редактор выключен (фича не сломает остальное).
+  DS_JWT_SECRET: z.string().default(''),
+  // Публичный URL DS — с него БРАУЗЕР грузит api.js (минуя бэкенд). Поддомен docs.appka.space.
+  DS_PUBLIC_URL: z.string().default('https://docs.appka.space'),
+  // Внутренний адрес DS — бэкенд дёргает CommandService/ConvertService по сети docker.
+  DS_INTERNAL_URL: z.string().default('http://akc-docs'),
+  // Как DS достучится до БЭКЕНДА (document.url и callbackUrl) — внутреннее имя, НЕ localhost браузера.
+  BACKEND_INTERNAL_URL: z.string().default('http://backend:8081'),
 });
 
 export const env = schema.parse(process.env);

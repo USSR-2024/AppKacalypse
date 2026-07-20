@@ -10,6 +10,10 @@ import { nextRegistryNumber, visibilityCond, canView, isDocsAdmin, logDoc, versi
 import { putVersion, getVersionStream } from '../lib/dms-storage.js';
 import { startRoute, activeStepFor, approveStep, rejectStep, type ApproverInput } from '../lib/route-engine.js';
 import { notifyApprovalStep, notifyApprovalDecision } from '../lib/notify.js';
+import { env } from '../lib/env.js';
+import {
+  dsEnabled, signDs, signFileToken, signCallbackToken, docType, resolveAccess, commandForcesave,
+} from '../lib/ds.js';
 
 // /api/documents — карточки документов, версии, переход на согласование.
 // Модуль «Документы»: спека docs/ТЗ-документооборот.md, порядок docs/ПЛАН-документооборот.md.
@@ -499,6 +503,177 @@ documentRoutes.post('/:id/decision', async (c) => {
   }
   notifyApprovalDecision(id, row.title, row.authorId, actorName, outcome, u.sub).catch(() => {});
   return c.json({ ok: true, outcome });
+});
+
+// ── ONLYOFFICE: конфиг редактора, forcesave, история ─────────────────────────
+
+/** Роль юзера в текущем маршруте документа: активный согласующий / уже решивший. */
+async function approverRelation(documentId: string, userId: string): Promise<{ active: boolean; past: boolean }> {
+  const rows = await db
+    .select({ status: schema.routeSteps.status })
+    .from(schema.routeSteps)
+    .innerJoin(schema.routeInstances, eq(schema.routeInstances.id, schema.routeSteps.routeInstanceId))
+    .where(and(
+      eq(schema.routeInstances.documentId, documentId),
+      eq(schema.routeInstances.status, 'running'),
+      eq(schema.routeSteps.assigneeId, userId),
+    ));
+  return {
+    active: rows.some((r) => r.status === 'active'),
+    past: rows.some((r) => r.status === 'approved' || r.status === 'rejected'),
+  };
+}
+
+// Конфиг для DocsAPI.DocEditor: подписанный JWT DS, права по статусу/роли, key версии.
+documentRoutes.get('/:id/editor-config', async (c) => {
+  if (!dsEnabled()) return c.json({ error: 'editor_disabled' }, 503);
+  const w = c.get('workspace');
+  const u = c.get('user');
+  const id = c.req.param('id')!;
+  if (!(await canView(u, w.role, id))) return c.json({ error: 'forbidden' }, 403);
+
+  const [row] = await db.select({
+    id: doc.id, title: doc.title, status: doc.status, authorId: doc.authorId, ownerId: doc.ownerId,
+    currentVersionId: doc.currentVersionId, registryNumber: doc.registryNumber,
+  }).from(doc).where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  if (!row.currentVersionId) return c.json({ error: 'no_version' }, 409);   // редактировать нечего
+
+  const [v] = await db.select({
+    id: ver.id, versionNo: ver.versionNo, fileName: ver.fileName, fileHash: ver.fileHash, dsKey: ver.dsKey,
+  }).from(ver).where(eq(ver.id, row.currentVersionId)).limit(1);
+  if (!v) return c.json({ error: 'no_version' }, 409);
+
+  const dt = docType(v.fileName);
+  if (!dt) return c.json({ error: 'not_editable' }, 400);   // не офисный формат — редактора нет
+
+  const rel = await approverRelation(id, u.sub);
+  const access = resolveAccess({
+    status: row.status,
+    isAuthor: isDocsAdmin(w.role) || row.authorId === u.sub || row.ownerId === u.sub,
+    activeApprover: rel.active,
+    pastApprover: rel.past,
+  });
+  const userName = await actorDisplayName(u.sub);
+  const key = v.dsKey || `d${id.replace(/-/g, '').slice(0, 12)}_v${v.versionNo}_${v.fileHash.slice(0, 16)}`;
+  const fileToken = await signFileToken(id, v.id);
+  const cbToken = await signCallbackToken(id);
+
+  const config = {
+    documentType: dt.documentType,
+    document: {
+      fileType: dt.fileType,
+      key,
+      title: `${row.registryNumber ? row.registryNumber + ' ' : ''}${v.fileName}`,
+      url: `${env.BACKEND_INTERNAL_URL}/api/ds/file/${fileToken}`,
+      permissions: {
+        edit: access.edit,
+        review: access.review,
+        comment: access.comment,
+        download: true,
+        print: true,
+        copy: true,
+      },
+    },
+    editorConfig: {
+      mode: access.mode,
+      callbackUrl: `${env.BACKEND_INTERNAL_URL}/api/ds/callback/${cbToken}`,
+      lang: 'ru',
+      user: { id: u.sub, name: userName },
+      customization: {
+        forcesave: true,
+        autosave: true,
+        comments: true,
+        review: { trackChanges: access.trackChanges, reviewDisplay: 'markup', hoverMode: false },
+      },
+    },
+  };
+  // JWT всего конфига — DS проверяет подпись (JWT_ENABLED).
+  const token = await signDs(config as unknown as Record<string, unknown>);
+  return c.json({
+    config: { ...config, token },
+    apiUrl: `${env.DS_PUBLIC_URL}/web-apps/apps/api/documents/api.js`,
+    editable: access.mode === 'edit',
+  });
+});
+
+// Принудительное сохранение перед «отправить дальше»: снимает текущее состояние из DS,
+// не дожидаясь, пока закроют вкладку. Вызовет callback status:6 → там родится версия.
+documentRoutes.post('/:id/forcesave', async (c) => {
+  if (!dsEnabled()) return c.json({ error: 'editor_disabled' }, 503);
+  const w = c.get('workspace');
+  const u = c.get('user');
+  const id = c.req.param('id')!;
+  if (!(await canView(u, w.role, id))) return c.json({ error: 'forbidden' }, 403);
+
+  const [row] = await db.select({ currentVersionId: doc.currentVersionId }).from(doc)
+    .where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
+  if (!row?.currentVersionId) return c.json({ error: 'no_version' }, 409);
+  const [v] = await db.select({ versionNo: ver.versionNo, fileHash: ver.fileHash, dsKey: ver.dsKey })
+    .from(ver).where(eq(ver.id, row.currentVersionId)).limit(1);
+  if (!v) return c.json({ error: 'no_version' }, 409);
+  const key = v.dsKey || `d${id.replace(/-/g, '').slice(0, 12)}_v${v.versionNo}_${v.fileHash.slice(0, 16)}`;
+  const r = await commandForcesave(key);
+  // error:4 = «нечего сохранять, изменений нет» — это не ошибка для нас.
+  return c.json({ ok: r.error === 0 || r.error === 4, dsError: r.error });
+});
+
+// История версий для нативной панели DS (подсветка правок между версиями, ТЗ §4.6).
+documentRoutes.get('/:id/history', async (c) => {
+  const w = c.get('workspace');
+  const u = c.get('user');
+  const id = c.req.param('id')!;
+  if (!(await canView(u, w.role, id))) return c.json({ error: 'forbidden' }, 403);
+
+  const versions = await db.select({
+    versionNo: ver.versionNo, dsKey: ver.dsKey, fileHash: ver.fileHash, createdAt: ver.createdAt,
+    changesHistory: ver.changesHistory, dsServerVersion: ver.dsServerVersion, authorId: ver.authorId,
+    authorName: schema.users.displayName,
+  }).from(ver).leftJoin(schema.users, eq(schema.users.id, ver.authorId))
+    .where(eq(ver.documentId, id)).orderBy(ver.versionNo);
+  if (versions.length === 0) return c.json({ currentVersion: 0, history: [] });
+
+  const history = versions.map((v) => ({
+    version: v.versionNo,
+    key: v.dsKey || `d${id.replace(/-/g, '').slice(0, 12)}_v${v.versionNo}_${v.fileHash.slice(0, 16)}`,
+    created: v.createdAt.toISOString(),
+    user: { id: v.authorId, name: v.authorName ?? '—' },
+    changes: (v.changesHistory as { changes?: unknown[] } | null)?.changes ?? undefined,
+    serverVersion: v.dsServerVersion ?? undefined,
+  }));
+  return c.json({ currentVersion: versions[versions.length - 1]!.versionNo, history });
+});
+
+// Данные одной версии для истории DS: url файла и changesUrl (оба — подписанные ссылки в DS).
+documentRoutes.get('/:id/history/:versionNo', async (c) => {
+  if (!dsEnabled()) return c.json({ error: 'editor_disabled' }, 503);
+  const w = c.get('workspace');
+  const u = c.get('user');
+  const id = c.req.param('id')!;
+  const versionNo = Number(c.req.param('versionNo'));
+  if (!(await canView(u, w.role, id))) return c.json({ error: 'forbidden' }, 403);
+  if (!Number.isInteger(versionNo)) return c.json({ error: 'bad_request' }, 400);
+
+  const rows = await db.select({
+    id: ver.id, versionNo: ver.versionNo, fileHash: ver.fileHash, dsKey: ver.dsKey, changesObjectKey: ver.changesObjectKey,
+  }).from(ver).where(eq(ver.documentId, id)).orderBy(ver.versionNo);
+  const cur = rows.find((r) => r.versionNo === versionNo);
+  if (!cur) return c.json({ error: 'not_found' }, 404);
+  const prev = rows.filter((r) => r.versionNo < versionNo).at(-1);
+
+  const key = (r: { versionNo: number; fileHash: string; dsKey: string | null }) =>
+    r.dsKey || `d${id.replace(/-/g, '').slice(0, 12)}_v${r.versionNo}_${r.fileHash.slice(0, 16)}`;
+  const out: Record<string, unknown> = {
+    version: versionNo,
+    key: key(cur),
+    url: `${env.BACKEND_INTERNAL_URL}/api/ds/file/${await signFileToken(id, cur.id)}`,
+  };
+  if (cur.changesObjectKey) {
+    out.changesUrl = `${env.BACKEND_INTERNAL_URL}/api/ds/changes/${await signFileToken(id, cur.id)}`;
+    if (prev) out.previous = { key: key(prev), url: `${env.BACKEND_INTERNAL_URL}/api/ds/file/${await signFileToken(id, prev.id)}` };
+  }
+  out.token = await signDs(out as Record<string, unknown>);
+  return c.json(out);
 });
 
 // ── Журнал ───────────────────────────────────────────────────────────────────
