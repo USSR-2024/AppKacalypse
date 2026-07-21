@@ -29,6 +29,14 @@ async function actorDisplayName(userId: string): Promise<string> {
   return row?.name ?? 'Пользователь';
 }
 
+/** Контрагент из справочника этого ws → {id, name}, иначе null (чужой/несуществующий). */
+async function resolveCounterparty(workspaceId: string, counterpartyId: string): Promise<{ id: string; name: string } | null> {
+  const [row] = await db.select({ id: schema.docCounterparties.id, name: schema.docCounterparties.name })
+    .from(schema.docCounterparties)
+    .where(and(eq(schema.docCounterparties.id, counterpartyId), eq(schema.docCounterparties.workspaceId, workspaceId))).limit(1);
+  return row ?? null;
+}
+
 export const documentRoutes = new Hono();
 documentRoutes.use('*', requireAuth, requireWorkspace);
 // Фиче-флаг модуля + права юзера (резолвим один раз, кладём в контекст).
@@ -62,10 +70,18 @@ documentRoutes.get('/', async (c) => {
     else if (bucket === 'registry') conds.push(inArray(doc.status, ['signed', 'active', 'expired', 'terminated', 'archived', 'cancelled']));
   }
 
+  // Фасеты реестра: контрагент, категория(группа), тип. «Все документы контрагента».
+  const cpId = c.req.query('counterpartyId');
+  if (cpId) conds.push(eq(doc.counterpartyId, cpId));
+  const groupId = c.req.query('groupId');
+  if (groupId) conds.push(eq(doc.groupId, groupId));
+  const typeId = c.req.query('typeId');
+  if (typeId) conds.push(eq(doc.typeId, typeId));
+
   const rows = await db
     .select({
       id: doc.id, registryNumber: doc.registryNumber, title: doc.title, status: doc.status,
-      priority: doc.priority, dueAt: doc.dueAt, counterpartyName: doc.counterpartyName,
+      priority: doc.priority, dueAt: doc.dueAt, counterpartyName: doc.counterpartyName, counterpartyId: doc.counterpartyId,
       typeName: schema.docTypes.name, groupName: schema.docGroups.name,
       ownerName: schema.users.displayName,
       createdAt: doc.createdAt, updatedAt: doc.updatedAt,
@@ -134,6 +150,80 @@ documentRoutes.get('/inbox', async (c) => {
   return c.json(rows);
 });
 
+// ── Справочник контрагентов (M2) ─────────────────────────────────────────────
+// ★ Строго ДО '/:id'. Читают все (для пикера и фасета реестра); создавать может
+// canCreate (в т.ч. инлайн при заведении документа), править/удалять — canManage.
+const cp = schema.docCounterparties;
+
+documentRoutes.get('/counterparties', async (c) => {
+  const w = c.get('workspace');
+  const all = c.req.query('all') === '1';
+  const conds = [eq(cp.workspaceId, w.id)];
+  if (!all) conds.push(eq(cp.isActive, true));
+  const rows = await db
+    .select({ id: cp.id, name: cp.name, inn: cp.inn, note: cp.note, externalSource: cp.externalSource, isActive: cp.isActive })
+    .from(cp).where(and(...conds)).orderBy(cp.name);
+  return c.json(rows);
+});
+
+const cpCreateSchema = z.object({
+  name: z.string().trim().min(1).max(300),
+  inn: z.string().trim().max(20).optional(),
+  note: z.string().trim().max(1000).optional(),
+});
+
+documentRoutes.post('/counterparties', async (c) => {
+  const w = c.get('workspace');
+  if (!c.get('docPerms').canCreate) return c.json({ error: 'no_create_permission' }, 403);
+  const p = cpCreateSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!p.success) return c.json({ error: 'bad_request' }, 400);
+  try {
+    const [row] = await db.insert(cp).values({
+      workspaceId: w.id, name: p.data.name, inn: p.data.inn || null, note: p.data.note || null,
+    }).returning({ id: cp.id, name: cp.name, inn: cp.inn, note: cp.note, isActive: cp.isActive });
+    return c.json(row, 201);
+  } catch {
+    return c.json({ error: 'duplicate_name' }, 409);   // unique(workspace_id,name)
+  }
+});
+
+const cpUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(300).optional(),
+  inn: z.string().trim().max(20).nullable().optional(),
+  note: z.string().trim().max(1000).nullable().optional(),
+  isActive: z.boolean().optional(),
+});
+
+documentRoutes.patch('/counterparties/:cid', async (c) => {
+  const w = c.get('workspace');
+  if (!c.get('docPerms').canManage) return c.json({ error: 'forbidden' }, 403);
+  const p = cpUpdateSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!p.success) return c.json({ error: 'bad_request' }, 400);
+  const patch: Record<string, unknown> = { updatedAt: new Date() };
+  if (p.data.name !== undefined) patch.name = p.data.name;
+  if (p.data.inn !== undefined) patch.inn = p.data.inn || null;
+  if (p.data.note !== undefined) patch.note = p.data.note || null;
+  if (p.data.isActive !== undefined) patch.isActive = p.data.isActive;
+  try {
+    const [row] = await db.update(cp).set(patch)
+      .where(and(eq(cp.id, c.req.param('cid')), eq(cp.workspaceId, w.id)))
+      .returning({ id: cp.id, name: cp.name, inn: cp.inn, note: cp.note, isActive: cp.isActive });
+    if (!row) return c.json({ error: 'not_found' }, 404);
+    return c.json(row);
+  } catch {
+    return c.json({ error: 'duplicate_name' }, 409);
+  }
+});
+
+documentRoutes.delete('/counterparties/:cid', async (c) => {
+  const w = c.get('workspace');
+  if (!c.get('docPerms').canManage) return c.json({ error: 'forbidden' }, 403);
+  // FK documents.counterparty_id ON DELETE SET NULL — привязанные документы сохранят
+  // строковое имя (counterparty_name), но потеряют ссылку. Мягче — деактивация (PATCH).
+  await db.delete(cp).where(and(eq(cp.id, c.req.param('cid')), eq(cp.workspaceId, w.id)));
+  return c.json({ ok: true });
+});
+
 // ── Карточка ─────────────────────────────────────────────────────────────────
 documentRoutes.get('/:id', async (c) => {
   const w = c.get('workspace');
@@ -145,7 +235,8 @@ documentRoutes.get('/:id', async (c) => {
     .select({
       id: doc.id, workspaceId: doc.workspaceId, registryNumber: doc.registryNumber, title: doc.title,
       description: doc.description, status: doc.status, priority: doc.priority, priorityReason: doc.priorityReason,
-      dueAt: doc.dueAt, typeId: doc.typeId, groupId: doc.groupId, counterpartyName: doc.counterpartyName,
+      dueAt: doc.dueAt, typeId: doc.typeId, groupId: doc.groupId,
+      counterpartyId: doc.counterpartyId, counterpartyName: doc.counterpartyName,
       amount: doc.amount, currency: doc.currency, currentVersionId: doc.currentVersionId,
       signedVersionId: doc.signedVersionId, storageLocation: doc.storageLocation,
       dateSigned: doc.dateSigned, effectiveFrom: doc.effectiveFrom, effectiveTo: doc.effectiveTo,
@@ -188,7 +279,8 @@ const createSchema = z.object({
   title: z.string().trim().min(1).max(500),
   typeId: z.string().uuid(),
   description: z.string().max(10000).optional(),
-  counterpartyName: z.string().max(500).optional(),
+  counterpartyId: z.string().uuid().nullable().optional(),   // из справочника (M2)
+  counterpartyName: z.string().max(500).optional(),          // свободный ввод (fallback)
   priority: z.enum(['critical', 'urgent', 'important', 'low']).optional(),
   priorityReason: z.string().max(1000).optional(),
   dueAt: z.string().datetime({ offset: true }).optional(),
@@ -213,6 +305,15 @@ documentRoutes.post('/', async (c) => {
     return c.json({ error: 'priority_reason_required' }, 400);
   }
 
+  // Контрагент из справочника → берём его имя (денормализация); иначе свободный ввод.
+  let cpId: string | null = null;
+  let cpName: string | null = p.data.counterpartyName?.trim() || null;
+  if (p.data.counterpartyId) {
+    const found = await resolveCounterparty(w.id, p.data.counterpartyId);
+    if (!found) return c.json({ error: 'bad_counterparty' }, 400);
+    cpId = found.id; cpName = found.name;
+  }
+
   const row = await db.transaction(async (tx) => {
     const [d] = await tx.insert(doc).values({
       workspaceId: w.id,
@@ -222,7 +323,8 @@ documentRoutes.post('/', async (c) => {
       groupId: type.groupId,          // группа наследуется от типа
       authorId: u.sub,
       ownerId: u.sub,                 // ответственный по умолчанию — инициатор
-      counterpartyName: p.data.counterpartyName ?? null,
+      counterpartyId: cpId,
+      counterpartyName: cpName,
       priority: p.data.priority ?? 'important',
       priorityReason: p.data.priorityReason ?? null,
       dueAt: p.data.dueAt ? new Date(p.data.dueAt) : null,
@@ -258,6 +360,16 @@ documentRoutes.patch('/:id', async (c) => {
   const patch: Record<string, unknown> = { updatedAt: new Date() };
   if (d.title !== undefined) patch.title = d.title;
   if (d.description !== undefined) patch.description = d.description;
+  // Контрагент: id из справочника (проставляем и денормализованное имя), либо свободный ввод.
+  if (d.counterpartyId !== undefined) {
+    if (d.counterpartyId) {
+      const found = await resolveCounterparty(w.id, d.counterpartyId);
+      if (!found) return c.json({ error: 'bad_counterparty' }, 400);
+      patch.counterpartyId = found.id; patch.counterpartyName = found.name;
+    } else {
+      patch.counterpartyId = null;   // отвязали от справочника (имя оставит следующая строка, если пришло)
+    }
+  }
   if (d.counterpartyName !== undefined) patch.counterpartyName = d.counterpartyName;
   if (d.priority !== undefined) patch.priority = d.priority;
   if (d.priorityReason !== undefined) patch.priorityReason = d.priorityReason;

@@ -193,12 +193,23 @@ export interface DocRow {
   status: DocumentStatus;
   priority: DocPriority;
   dueAt: string | null;
+  counterpartyId: string | null;
   counterpartyName: string | null;
   typeName: string | null;
   groupName: string | null;
   ownerName: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// Контрагент из справочника (M2). CRUD — /documents/counterparties.
+export interface DocCounterparty {
+  id: string;
+  name: string;
+  inn: string | null;
+  note: string | null;
+  externalSource?: string | null;
+  isActive: boolean;
 }
 
 export interface DocCard extends DocRow {

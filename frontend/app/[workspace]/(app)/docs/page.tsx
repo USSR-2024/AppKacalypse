@@ -6,7 +6,7 @@ import { fetcher, api } from "@/lib/api";
 import { useWs, wsHref } from "@/lib/ws";
 import { Sheet } from "@/components/Sheet";
 import { DOC_STATUS, DOC_PRIORITY, StatusChip } from "@/lib/docStrings";
-import type { DocRow, DocType, DocPriority, DocInboxItem } from "@/lib/types";
+import type { DocRow, DocType, DocPriority, DocInboxItem, DocCounterparty } from "@/lib/types";
 
 // «В работе» — документы, по которым идёт согласование/подписание. Подписанные и
 // сданные в архив живут в «Реестре» (/docs/registry). Фасеты реестра — след. срез M2.
@@ -141,9 +141,12 @@ export default function DocsPage() {
 
 function CreateSheet({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string, edit?: boolean) => void }) {
   const { data: types } = useSWR<DocType[]>("/documents/types", fetcher);
+  const { data: counterparties } = useSWR<DocCounterparty[]>("/documents/counterparties", fetcher);
   const [title, setTitle] = useState("");
   const [typeId, setTypeId] = useState("");
-  const [counterparty, setCounterparty] = useState("");
+  // Контрагент: id из справочника, спецзначение "__free__" (ввести вручную) или "" (не указан).
+  const [cpChoice, setCpChoice] = useState("");
+  const [cpFree, setCpFree] = useState("");
   const [priority, setPriority] = useState<DocPriority>("important");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -158,12 +161,16 @@ function CreateSheet({ onClose, onCreated }: { onClose: () => void; onCreated: (
     if (priority === "critical" && !reason.trim()) return setErr("Критический приоритет требует обоснования");
     setBusy(true);
     try {
+      const cpFields =
+        cpChoice === "__free__" ? { counterpartyName: cpFree.trim() || undefined }
+        : cpChoice ? { counterpartyId: cpChoice }
+        : {};
       const d = await api<{ id: string }>("/documents", {
         method: "POST",
         body: JSON.stringify({
           title: title.trim(),
           typeId,
-          counterpartyName: counterparty.trim() || undefined,
+          ...cpFields,
           priority,
           priorityReason: priority === "critical" ? reason.trim() : undefined,
         }),
@@ -212,12 +219,25 @@ function CreateSheet({ onClose, onCreated }: { onClose: () => void; onCreated: (
       )}
 
       <label className="text-xs text-muted">Контрагент</label>
-      <input
-        value={counterparty}
-        onChange={(e) => setCounterparty(e.target.value)}
-        placeholder="ООО «Ромашка»"
+      <select
+        value={cpChoice}
+        onChange={(e) => setCpChoice(e.target.value)}
         className="mb-3 mt-1 w-full rounded-xl bg-surface px-3 py-2.5 text-sm outline-none"
-      />
+      >
+        <option value="">— не указан —</option>
+        {counterparties?.map((c) => (
+          <option key={c.id} value={c.id}>{c.name}{c.inn ? ` (ИНН ${c.inn})` : ""}</option>
+        ))}
+        <option value="__free__">Ввести вручную…</option>
+      </select>
+      {cpChoice === "__free__" && (
+        <input
+          value={cpFree}
+          onChange={(e) => setCpFree(e.target.value)}
+          placeholder="ООО «Ромашка»"
+          className="mb-3 w-full rounded-xl bg-surface px-3 py-2.5 text-sm outline-none"
+        />
+      )}
 
       <label className="text-xs text-muted">Приоритет</label>
       <div className="mb-3 mt-1 flex gap-1">

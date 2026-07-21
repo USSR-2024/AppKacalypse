@@ -5,11 +5,11 @@ import useSWR from "swr";
 import { fetcher, api } from "@/lib/api";
 import { useWs, wsHref } from "@/lib/ws";
 import { Sheet } from "@/components/Sheet";
-import type { DocAdminGroup, DocAdminType, DocUnit, DocMember, DocMatrixRow, OrgUnitRole, DocAccess } from "@/lib/types";
+import type { DocAdminGroup, DocAdminType, DocUnit, DocMember, DocMatrixRow, OrgUnitRole, DocAccess, DocCounterparty } from "@/lib/types";
 
 // «Настройки» модуля документов: справочники, функциональные группы, матрица, доступ.
 // Всё редактируется в UI — «не лезть в код» (требование владельца). Только админ.
-type Tab = "types" | "groups" | "units" | "matrix" | "access";
+type Tab = "types" | "groups" | "units" | "counterparties" | "matrix" | "access";
 
 const ROLE_LABEL: Record<OrgUnitRole, string> = { lead: "лид", member: "участник", deputy: "заместитель" };
 
@@ -31,6 +31,7 @@ export default function DocsSettingsPage() {
     { v: "types", label: "Типы" },
     { v: "groups", label: "Категории" },
     { v: "units", label: "Группы согласования" },
+    { v: "counterparties", label: "Контрагенты" },
     { v: "matrix", label: "Матрица" },
     { v: "access", label: "Доступ" },
   ];
@@ -55,6 +56,7 @@ export default function DocsSettingsPage() {
       {tab === "types" && <TypesSection />}
       {tab === "groups" && <GroupsSection />}
       {tab === "units" && <UnitsSection />}
+      {tab === "counterparties" && <CounterpartiesSection />}
       {tab === "matrix" && <MatrixSection />}
       {tab === "access" && <AccessSection />}
     </main>
@@ -139,6 +141,97 @@ function GroupsSection() {
       {add && <CodeNameSheet title="Новая категория" onClose={() => setAdd(false)}
         onSave={async (code, name) => { await api("/docs-admin/groups", { method: "POST", body: JSON.stringify({ code, name }) }); setAdd(false); mutate(); }} />}
     </section>
+  );
+}
+
+// ── Контрагенты (справочник M2) ───────────────────────────────────────────────
+function CounterpartiesSection() {
+  // all=1 — показываем и деактивированных (админ ими управляет).
+  const { data, mutate } = useSWR<DocCounterparty[]>("/documents/counterparties?all=1", fetcher);
+  const [edit, setEdit] = useState<DocCounterparty | "new" | null>(null);
+  return (
+    <section>
+      <SectionHead title="Справочник контрагентов" onAdd={() => setEdit("new")} />
+      <p className="mb-3 text-xs text-muted">Ручной ввод. Подтяжка из учётной системы — на будущее (задел в схеме есть).</p>
+      <div className="flex flex-col gap-2">
+        {data?.map((c) => (
+          <button key={c.id} onClick={() => setEdit(c)}
+            className={`flex items-center justify-between gap-2 rounded-2xl px-4 py-3 text-left transition hover:bg-surface-2 ${c.isActive ? "bg-surface" : "bg-surface opacity-50"}`}>
+            <div className="min-w-0">
+              <span className="font-medium">{c.name}</span>
+              {c.inn && <span className="ml-2 font-mono text-xs text-muted">ИНН {c.inn}</span>}
+              {!c.isActive && <span className="ml-2 text-xs text-muted">(скрыт)</span>}
+              {c.note && <div className="truncate text-xs text-muted">{c.note}</div>}
+            </div>
+            <span className="shrink-0 text-xs text-muted">изменить</span>
+          </button>
+        ))}
+        {data && data.length === 0 && <Empty>Контрагентов пока нет. Добавьте первого — их можно будет выбрать при создании документа.</Empty>}
+      </div>
+      {edit && (
+        <CounterpartySheet
+          cp={edit === "new" ? null : edit}
+          onClose={() => setEdit(null)}
+          onSaved={() => { setEdit(null); mutate(); }}
+        />
+      )}
+    </section>
+  );
+}
+
+function CounterpartySheet({ cp, onClose, onSaved }: { cp: DocCounterparty | null; onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState(cp?.name ?? "");
+  const [inn, setInn] = useState(cp?.inn ?? "");
+  const [note, setNote] = useState(cp?.note ?? "");
+  const [isActive, setIsActive] = useState(cp?.isActive ?? true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function save() {
+    if (!name.trim()) return setErr("Укажите название");
+    setBusy(true);
+    setErr(null);
+    try {
+      const body = JSON.stringify({ name: name.trim(), inn: inn.trim() || null, note: note.trim() || null, isActive });
+      if (cp) await api(`/documents/counterparties/${cp.id}`, { method: "PATCH", body });
+      else await api("/documents/counterparties", { method: "POST", body });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error && e.message === "duplicate_name" ? "Контрагент с таким названием уже есть" : "Не удалось сохранить");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Sheet onClose={onClose} size="lg">
+      <h2 className="mb-4 text-lg font-semibold">{cp ? "Контрагент" : "Новый контрагент"}</h2>
+      <label className="text-xs text-muted">Название</label>
+      <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="ООО «Ромашка»"
+        className="mb-3 mt-1 w-full rounded-xl bg-surface px-3 py-2.5 text-sm outline-none" />
+      <label className="text-xs text-muted">ИНН (необязательно)</label>
+      <input value={inn} onChange={(e) => setInn(e.target.value)} placeholder="7712345678"
+        className="mb-3 mt-1 w-full rounded-xl bg-surface px-3 py-2.5 text-sm outline-none" />
+      <label className="text-xs text-muted">Заметка (необязательно)</label>
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Поставщик упаковки"
+        className="mb-3 mt-1 w-full rounded-xl bg-surface px-3 py-2.5 text-sm outline-none" />
+      {cp && (
+        <label className="mb-3 flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
+          Активен (доступен для выбора)
+        </label>
+      )}
+      {err && <p className="mb-3 text-sm text-danger">{err}</p>}
+      <div className="flex gap-2">
+        {cp && (
+          <button onClick={async () => { if (confirm("Удалить контрагента из справочника? У привязанных документов останется только текстовое имя.")) { await api(`/documents/counterparties/${cp.id}`, { method: "DELETE" }).catch(() => {}); onSaved(); } }}
+            className="rounded-xl bg-surface px-4 py-3 text-sm text-muted hover:text-danger">Удалить</button>
+        )}
+        <button onClick={onClose} className="flex-1 rounded-xl bg-surface px-4 py-3 text-sm font-medium">Отмена</button>
+        <button onClick={save} disabled={busy} className="flex-1 rounded-xl bg-accent px-4 py-3 text-sm font-medium text-white disabled:opacity-40">
+          {busy ? "Сохраняем…" : "Сохранить"}
+        </button>
+      </div>
+    </Sheet>
   );
 }
 

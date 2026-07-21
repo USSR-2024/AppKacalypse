@@ -556,6 +556,26 @@ export const docRegistryCounters = pgTable('doc_registry_counters', {
   pk: primaryKey({ columns: [t.workspaceId, t.typeId, t.periodKey] }),
 }));
 
+// Справочник контрагентов (M2). Ручной ввод; реквизиты-OOXML и реальный синк — за
+// границами первого захода, но фундамент под подтяжку из учётной системы заложен
+// (external_id/external_source). Карточка документа ссылается сюда (documents.counterparty_id),
+// строковый counterparty_name остаётся для свободного ввода и обратной совместимости.
+export const docCounterparties = pgTable('doc_counterparties', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  inn: text('inn'),                          // ИНН/налоговый номер — опционально
+  note: text('note'),
+  externalId: text('external_id'),           // id в учётной системе (задел под синк)
+  externalSource: text('external_source'),   // какая система (задел под синк)
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  wsIdx: index('doc_counterparties_ws_idx').on(t.workspaceId),
+  nameUnique: unique('doc_counterparties_ws_name_unique').on(t.workspaceId, t.name),
+}));
+
 // ── Функциональные группы (кто согласует) ────────────────────────────────────
 
 // Юристы, Финансы, СБ, HR… Матрица зовёт ГРУППУ, а не человека: иначе увольнение
@@ -631,8 +651,9 @@ export const documents = pgTable('documents', {
   authorId: uuid('author_id').notNull().references(() => users.id),
   ownerId: uuid('owner_id').notNull().references(() => users.id),   // ответственный за карточку
 
-  // Контрагент строкой: справочник реквизитов — за границами первого захода,
-  // но реестру нужен поиск по контрагенту (план, фаза 6).
+  // Контрагент: ссылка на справочник (M2) + денормализованное имя строкой (свободный
+  // ввод и обратная совместимость; при выборе из справочника проставляем оба).
+  counterpartyId: uuid('counterparty_id').references(() => docCounterparties.id, { onDelete: 'set null' }),
   counterpartyName: text('counterparty_name'),
 
   dateSigned: date('date_signed'),

@@ -5,16 +5,21 @@ import useSWR from "swr";
 import { fetcher } from "@/lib/api";
 import { useWs, wsHref } from "@/lib/ws";
 import { StatusChip } from "@/lib/docStrings";
-import type { DocRow } from "@/lib/types";
+import type { DocRow, DocCounterparty } from "@/lib/types";
 
-// «Реестр» — подписанные и сданные в архив документы: хранение + поиск. Полные фасеты
-// (категория/контрагент/инициатор/период/экспорт) — следующий срез M2; пока статус + поиск.
+// «Реестр» — подписанные и сданные в архив документы: хранение + поиск + фасеты.
+// Статус/контрагент — серверные фильтры; поиск по тексту — клиентский по загруженному.
 export default function RegistryPage() {
   const ws = useWs();
   const router = useRouter();
   const [filter, setFilter] = useState<string>("");
+  const [cpId, setCpId] = useState<string>("");
   const [q, setQ] = useState("");
-  const { data, error } = useSWR<DocRow[]>(`/documents${filter ? `?status=${filter}` : "?bucket=registry"}`, fetcher);
+  const { data: counterparties } = useSWR<DocCounterparty[]>("/documents/counterparties", fetcher);
+  const query = new URLSearchParams();
+  if (filter) query.set("status", filter); else query.set("bucket", "registry");
+  if (cpId) query.set("counterpartyId", cpId);
+  const { data, error } = useSWR<DocRow[]>(`/documents?${query.toString()}`, fetcher);
   const disabled = error instanceof Error && error.message === "module_disabled";
 
   const rows = useMemo(() => {
@@ -56,12 +61,24 @@ export default function RegistryPage() {
         </p>
       </header>
 
-      <input
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        placeholder="Поиск по номеру, названию, контрагенту…"
-        className="mb-4 w-full rounded-xl bg-surface px-3.5 py-2.5 text-sm outline-none"
-      />
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Поиск по номеру, названию, контрагенту…"
+          className="w-full rounded-xl bg-surface px-3.5 py-2.5 text-sm outline-none"
+        />
+        <select
+          value={cpId}
+          onChange={(e) => setCpId(e.target.value)}
+          className="rounded-xl bg-surface px-3 py-2.5 text-sm text-muted outline-none sm:w-64"
+        >
+          <option value="">Все контрагенты</option>
+          {counterparties?.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+      </div>
 
       <div className="mb-4 flex gap-1 overflow-x-auto pb-1">
         {tabs.map((t) => (
