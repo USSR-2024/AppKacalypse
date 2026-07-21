@@ -21,7 +21,7 @@ export default function DocsSettingsPage() {
   const { error } = useSWR<DocAdminGroup[]>("/docs-admin/groups", fetcher);
 
   if (error) return (
-    <main className="px-4 pt-12">
+    <main className="mx-auto max-w-4xl px-4 pt-12">
       <button onClick={() => router.push(wsHref(ws, "/docs"))} className="mb-3 text-sm text-accent">← К документам</button>
       <p className="rounded-2xl bg-surface px-4 py-3 text-sm text-muted">Настройки документооборота доступны только администратору пространства.</p>
     </main>
@@ -37,7 +37,7 @@ export default function DocsSettingsPage() {
   ];
 
   return (
-    <main className="px-4 pt-12">
+    <main className="mx-auto max-w-4xl px-4 pt-12">
       <button onClick={() => router.push(wsHref(ws, "/docs"))} className="mb-3 text-sm text-accent">← К документам</button>
       <header className="mb-5">
         <h1 className="text-2xl font-semibold">Настройки документооборота</h1>

@@ -1,6 +1,6 @@
 "use client";
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { fetcher } from "@/lib/api";
 import { useWs, wsHref } from "@/lib/ws";
@@ -24,7 +24,7 @@ export default function RegistryPage() {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [groupId, setGroupId] = useState("");
-  const [cpId, setCpId] = useState("");
+  const [cpId, setCpId] = useState(useSearchParams().get("cp") || "");   // из «Реестра контрагентов»
   const [ownerId, setOwnerId] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");

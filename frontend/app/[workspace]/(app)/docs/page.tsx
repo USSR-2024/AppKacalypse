@@ -24,7 +24,7 @@ export default function DocsPage() {
   const disabled = error instanceof Error && error.message === "module_disabled";
 
   if (disabled) return (
-    <main className="px-4 pt-12">
+    <main className="mx-auto max-w-4xl px-4 pt-12">
       <h1 className="text-2xl font-semibold">Документы</h1>
       <p className="mt-3 rounded-2xl bg-surface px-4 py-3 text-sm text-muted">
         Модуль отключён администратором пространства. Включить можно в{" "}
@@ -44,7 +44,7 @@ export default function DocsPage() {
   ];
 
   return (
-    <main className="px-4 pt-12">
+    <main className="mx-auto max-w-4xl px-4 pt-12">
       <header className="mb-5 flex items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">В работе</h1>

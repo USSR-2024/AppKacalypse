@@ -171,8 +171,15 @@ documentRoutes.get('/counterparties', async (c) => {
   const conds = [eq(cp.workspaceId, w.id)];
   if (!all) conds.push(eq(cp.isActive, true));
   const rows = await db
-    .select({ id: cp.id, name: cp.name, inn: cp.inn, note: cp.note, externalSource: cp.externalSource, isActive: cp.isActive })
-    .from(cp).where(and(...conds)).orderBy(cp.name);
+    .select({
+      id: cp.id, name: cp.name, inn: cp.inn, note: cp.note, externalSource: cp.externalSource, isActive: cp.isActive,
+      docCount: sql<number>`count(${doc.id})::int`,
+    })
+    .from(cp)
+    .leftJoin(doc, eq(doc.counterpartyId, cp.id))
+    .where(and(...conds))
+    .groupBy(cp.id)      // остальные поля cp функционально зависят от PK
+    .orderBy(cp.name);
   return c.json(rows);
 });
 

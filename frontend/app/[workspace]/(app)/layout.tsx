@@ -92,7 +92,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         {/* На мобиле узкая колонка (как было), на десктопе — шире. Документооборот
             (десктоп-модуль) использует всю ширину: рабочая область + инфо-колонка. */}
         <div
-          className={`mx-auto w-full max-w-md flex-1 pb-24 lg:px-6 lg:pb-10 lg:pt-8 ${pathname.includes("/docs") ? "lg:max-w-6xl" : "lg:max-w-3xl"}`}
+          className={`mx-auto w-full max-w-md flex-1 pb-24 lg:px-6 lg:pb-10 lg:pt-8 ${pathname.includes("/docs") ? "lg:max-w-6xl" : "lg:max-w-5xl"}`}
           style={{ paddingTop: "calc(env(safe-area-inset-top) + 1rem)" }}
         >
           <PullToRefresh>{children}</PullToRefresh>

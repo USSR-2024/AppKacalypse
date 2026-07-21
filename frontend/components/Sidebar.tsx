@@ -18,7 +18,7 @@ const NAV = [
   { href: "/projects", label: "Проекты", icon: "📁" },
   { href: "/calendar", label: "Календарь", icon: "🗓" },
   { href: "/meet", label: "Встречи", icon: "📹" },
-  { href: "/docs", label: "Документы", icon: "📄" },
+  { href: "/docs", label: "Делопроизводство", icon: "🗂" },
   { href: "/team", label: "Команда", icon: "👥" },
 ];
 
@@ -47,13 +47,30 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
   const current = mine?.find((w) => w.slug === ws);
   const isOwner = me?.role === "owner";
 
-  // Свёрнут — тонкая полоса с кнопкой развернуть (больше места под рабочую область).
+  // Свёрнут — узкий рельс с ИКОНКАМИ (больше места под рабочую область, но навигация под рукой).
   if (collapsed) {
+    const isAdmin = current?.role === "admin" || current?.role === "owner";
+    const iconLink = (href: string, icon: string, label: string) => {
+      const full = wsHref(ws, href);
+      const active = path.startsWith(full);
+      return (
+        <Link key={href} href={full} title={label}
+          className={`flex h-10 w-10 items-center justify-center rounded-xl text-lg transition ${active ? "bg-gold-soft text-gold" : "text-muted hover:bg-surface-2 hover:text-text"}`}>
+          {icon}
+        </Link>
+      );
+    };
     return (
-      <aside className="sticky top-0 hidden h-dvh w-9 shrink-0 flex-col items-center border-r border-border bg-surface pt-3 lg:flex">
-        <button onClick={toggleCollapse} title="Показать меню" className="rounded-lg px-2 py-1.5 text-muted transition hover:bg-surface-2 hover:text-text">
-          »
-        </button>
+      <aside className="sticky top-0 hidden h-dvh w-14 shrink-0 flex-col items-center border-r border-border bg-surface py-3 lg:flex">
+        <button onClick={toggleCollapse} title="Развернуть меню" className="mb-2 rounded-lg px-2 py-1.5 text-muted transition hover:bg-surface-2 hover:text-text">»</button>
+        <nav className="flex flex-1 flex-col items-center gap-1 overflow-y-auto">
+          {NAV.map((it) => iconLink(it.href, it.icon, it.label))}
+          {isAdmin && iconLink("/users", "🧑‍🤝‍🧑", "Участники")}
+          {isAdmin && iconLink("/protocol", "🎙", "Расшифровки")}
+        </nav>
+        <Link href={wsHref(ws, "/profile")} title="Профиль" className="mt-2">
+          <Avatar src={me?.avatarUrl} name={me?.displayName} className="h-9 w-9 bg-surface-2 text-sm" />
+        </Link>
       </aside>
     );
   }
@@ -123,16 +140,18 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
         {NAV.map((it) => {
           const href = wsHref(ws, it.href);
           const active = path.startsWith(href);
-          // «Документы» — раскрывающийся раздел: В работе / Реестр / Настройки (десктоп-only модуль).
+          // «Делопроизводство» — раскрывающийся раздел (десктоп-only модуль).
           if (it.href === "/docs") {
             const inDocs = path.startsWith(href);
             const canManage = current?.role === "admin" || current?.role === "owner";
             const isRegistry = path.startsWith(wsHref(ws, "/docs/registry"));
+            const isCps = path.startsWith(wsHref(ws, "/docs/counterparties"));
             const isSettings = path.startsWith(wsHref(ws, "/docs/settings"));
-            const isInWork = inDocs && !isRegistry && !isSettings;
+            const isInWork = inDocs && !isRegistry && !isCps && !isSettings;
             const sub = [
               { href: "/docs", label: "В работе", on: isInWork },
-              { href: "/docs/registry", label: "Реестр", on: isRegistry },
+              { href: "/docs/registry", label: "Реестр документов", on: isRegistry },
+              { href: "/docs/counterparties", label: "Реестр контрагентов", on: isCps },
               ...(canManage ? [{ href: "/docs/settings", label: "Настройки", on: isSettings }] : []),
             ];
             return (

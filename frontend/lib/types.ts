@@ -214,6 +214,7 @@ export interface DocCounterparty {
   note: string | null;
   externalSource?: string | null;
   isActive: boolean;
+  docCount?: number;
 }
 
 export interface DocCard extends DocRow {
