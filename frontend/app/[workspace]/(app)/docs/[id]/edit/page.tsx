@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { useWs, wsHref } from "@/lib/ws";
 
@@ -40,6 +40,7 @@ function loadDsApi(apiUrl: string): Promise<void> {
 
 export default function DocEditorPage() {
   const { id } = useParams<{ id: string }>();
+  const versionId = useSearchParams().get("v");   // просмотр старой версии (read-only)
   const ws = useWs();
   const router = useRouter();
   const editorRef = useRef<any>(null);
@@ -50,7 +51,7 @@ export default function DocEditorPage() {
     let cancelled = false;
     (async () => {
       try {
-        const r = await api<EditorConfigResp>(`/documents/${id}/editor-config`);
+        const r = await api<EditorConfigResp>(`/documents/${id}/editor-config${versionId ? `?versionId=${versionId}` : ""}`);
         if (cancelled) return;
         await loadDsApi(r.apiUrl);
         if (cancelled) return;
@@ -94,7 +95,7 @@ export default function DocEditorPage() {
       cancelled = true;
       try { editorRef.current?.destroyEditor?.(); } catch { /* noop */ }
     };
-  }, [id]);
+  }, [id, versionId]);
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-bg">

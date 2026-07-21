@@ -220,6 +220,8 @@ export interface DocCard extends DocRow {
   currentVersionId: string | null;
   amount: string | null;
   currency: string | null;
+  requiresNote: boolean;
+  hasNote: boolean;
   versions: DocVersion[];
   canEdit: boolean;
   canSubmit: boolean;
@@ -227,6 +229,7 @@ export interface DocCard extends DocRow {
   canDelete: boolean;
   canRename: boolean;
   canApproveFinal: boolean;   // документ на утверждении и я — утверждающий (глава)
+  canSign: boolean;           // утверждён — можно загрузить подписанный оригинал
 }
 
 export interface DocType {

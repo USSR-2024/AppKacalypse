@@ -89,9 +89,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <Avatar src={me?.avatarUrl} name={me?.displayName} className="h-9 w-9 bg-surface text-sm" />
         </Link>
 
-        {/* На мобиле узкая колонка (как было), на десктопе — шире и без верхнего отступа под плавающую кнопку. */}
+        {/* На мобиле узкая колонка (как было), на десктопе — шире. Документооборот
+            (десктоп-модуль) использует всю ширину: рабочая область + инфо-колонка. */}
         <div
-          className="mx-auto w-full max-w-md flex-1 pb-24 lg:max-w-3xl lg:px-6 lg:pb-10 lg:pt-8"
+          className={`mx-auto w-full max-w-md flex-1 pb-24 lg:px-6 lg:pb-10 lg:pt-8 ${pathname.includes("/docs") ? "lg:max-w-6xl" : "lg:max-w-3xl"}`}
           style={{ paddingTop: "calc(env(safe-area-inset-top) + 1rem)" }}
         >
           <PullToRefresh>{children}</PullToRefresh>

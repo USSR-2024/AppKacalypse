@@ -282,7 +282,15 @@ documentRoutes.get('/:id', async (c) => {
   const canRename = mine;
   // Утвердить (этап после согласования): документ на утверждении и я — утверждающий (глава).
   const canApproveFinal = row.status === 'on_signing' && perms.canManage;
-  return c.json({ ...row, versions, canEdit, canSubmit, canManage: perms.canManage, canDelete, canRename, canApproveFinal });
+  // Есть ли пояснительная записка (для этапа «ПЗ» в статусе). Подписание: загрузка
+  // подписанного оригинала после утверждения (status approved).
+  let hasNote = false;
+  if (row.requiresNote) {
+    const [n] = await db.select({ id: schema.explanatoryNotes.id }).from(schema.explanatoryNotes).where(eq(schema.explanatoryNotes.documentId, id)).limit(1);
+    hasNote = !!n;
+  }
+  const canSign = row.status === 'approved' && mine;
+  return c.json({ ...row, versions, canEdit, canSubmit, canManage: perms.canManage, canDelete, canRename, canApproveFinal, hasNote, canSign });
 });
 
 // ── Создание ─────────────────────────────────────────────────────────────────
@@ -491,6 +499,53 @@ documentRoutes.put('/:id/versions', async (c) => {
     return c.json(created, 201);
   } catch (e) {
     console.error('version upload failed', e);
+    return c.json({ error: 'upload_failed' }, 502);
+  }
+});
+
+// ── Подписание: загрузка подписанного оригинала (скан/PDF) ────────────────────
+// Финал делопроизводства: после утверждения грузим скан подписанного оригинала →
+// версия помечается signed, документ → 'signed' и уходит в Реестр.
+documentRoutes.put('/:id/sign', async (c) => {
+  const w = c.get('workspace');
+  const u = c.get('user');
+  const id = c.req.param('id')!;
+  const fileName = (c.req.query('filename') || '').trim();
+  if (!fileName) return c.json({ error: 'filename_required' }, 400);
+
+  const [row] = await db.select({ status: doc.status, ownerId: doc.ownerId, authorId: doc.authorId }).from(doc).where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  const mine = c.get('docPerms').canManage || row.ownerId === u.sub || row.authorId === u.sub;
+  if (!mine) return c.json({ error: 'forbidden' }, 403);
+  if (row.status !== 'approved') return c.json({ error: 'not_approved' }, 409);   // подписывают только утверждённый
+
+  const body = c.req.raw.body;
+  if (!body) return c.json({ error: 'empty_body' }, 400);
+  const buf = Buffer.from(await new Response(body).arrayBuffer());
+  if (!buf.length) return c.json({ error: 'empty_file' }, 400);
+  if (buf.length > MAX_FILE) return c.json({ error: 'too_large' }, 413);
+
+  const mime = c.req.header('content-type') || 'application/octet-stream';
+  const ext = extname(fileName) || '.pdf';
+  try {
+    const created = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM documents WHERE id = ${id} FOR UPDATE`);
+      const [last] = await tx.select({ n: ver.versionNo }).from(ver).where(eq(ver.documentId, id)).orderBy(desc(ver.versionNo)).limit(1);
+      const versionNo = (last?.n ?? 0) + 1;
+      const key = versionKey(id, versionNo, ext);
+      const { hash, size } = await putVersion(key, buf, mime);
+      const [v] = await tx.insert(ver).values({
+        documentId: id, versionNo, objectKey: key, fileName, fileSize: size,
+        fileHash: hash, mimeType: mime, authorId: u.sub, comment: 'Подписанный оригинал',
+        isSignedOriginal: true,
+      }).returning({ id: ver.id, versionNo: ver.versionNo });
+      await tx.update(doc).set({ signedVersionId: v!.id, status: 'signed', dateSigned: new Date().toISOString().slice(0, 10), updatedAt: new Date() }).where(eq(doc.id, id));
+      await logDoc(tx, { workspaceId: w.id, documentId: id, entity: 'version', entityId: v!.id, actorId: u.sub, action: 'signed', payload: { versionNo, fileName } });
+      return v!;
+    });
+    return c.json({ ...created, status: 'signed' }, 201);
+  } catch (e) {
+    console.error('sign upload failed', e);
     return c.json({ error: 'upload_failed' }, 502);
   }
 });
@@ -847,21 +902,28 @@ documentRoutes.get('/:id/editor-config', async (c) => {
   if (!row) return c.json({ error: 'not_found' }, 404);
   if (!row.currentVersionId) return c.json({ error: 'no_version' }, 409);   // редактировать нечего
 
+  // ?versionId= — открыть СТАРУЮ версию только на просмотр (без правок, без колбэка).
+  const reqVersionId = c.req.query('versionId');
+  const targetVersionId = reqVersionId || row.currentVersionId;
+  const isOldVersion = !!reqVersionId && reqVersionId !== row.currentVersionId;
+
   const [v] = await db.select({
     id: ver.id, versionNo: ver.versionNo, fileName: ver.fileName, fileHash: ver.fileHash, dsKey: ver.dsKey,
-  }).from(ver).where(eq(ver.id, row.currentVersionId)).limit(1);
+  }).from(ver).where(and(eq(ver.id, targetVersionId), eq(ver.documentId, id))).limit(1);
   if (!v) return c.json({ error: 'no_version' }, 409);
 
   const dt = docType(v.fileName);
   if (!dt) return c.json({ error: 'not_editable' }, 400);   // не офисный формат — редактора нет
 
   const rel = await approverRelation(id, u.sub);
-  const access = resolveAccess({
-    status: row.status,
-    isAuthor: c.get('docPerms').canManage || row.authorId === u.sub || row.ownerId === u.sub,
-    activeApprover: rel.active,
-    pastApprover: rel.past,
-  });
+  const access = isOldVersion
+    ? { mode: 'view' as const, edit: false, review: false, comment: false, trackChanges: false }   // старая версия — только чтение
+    : resolveAccess({
+        status: row.status,
+        isAuthor: c.get('docPerms').canManage || row.authorId === u.sub || row.ownerId === u.sub,
+        activeApprover: rel.active,
+        pastApprover: rel.past,
+      });
   const userName = await actorDisplayName(u.sub);
   const authorName = await actorDisplayName(row.authorId);   // для «Сведений о документе» (owner)
   const key = v.dsKey || `d${id.replace(/-/g, '').slice(0, 12)}_v${v.versionNo}_${v.fileHash.slice(0, 16)}`;

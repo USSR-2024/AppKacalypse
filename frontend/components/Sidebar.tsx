@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import useSWR from "swr";
@@ -38,9 +38,25 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
   const { data: mine } = useSWR<WsRow[]>("/workspaces/mine", fetcher);
   const { theme, toggle } = useTheme();
   const [switcher, setSwitcher] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => { setCollapsed(localStorage.getItem("sidebar-collapsed") === "1"); }, []);
+  function toggleCollapse() {
+    setCollapsed((v) => { localStorage.setItem("sidebar-collapsed", v ? "0" : "1"); return !v; });
+  }
 
   const current = mine?.find((w) => w.slug === ws);
   const isOwner = me?.role === "owner";
+
+  // Свёрнут — тонкая полоса с кнопкой развернуть (больше места под рабочую область).
+  if (collapsed) {
+    return (
+      <aside className="sticky top-0 hidden h-dvh w-9 shrink-0 flex-col items-center border-r border-border bg-surface pt-3 lg:flex">
+        <button onClick={toggleCollapse} title="Показать меню" className="rounded-lg px-2 py-1.5 text-muted transition hover:bg-surface-2 hover:text-text">
+          »
+        </button>
+      </aside>
+    );
+  }
 
   return (
     <aside className="sticky top-0 hidden h-dvh w-[260px] shrink-0 flex-col border-r border-border bg-surface lg:flex">
@@ -85,13 +101,20 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
         )}
       </div>
 
-      {/* Новая задача */}
-      <div className="p-3">
+      {/* Новая задача + свернуть меню */}
+      <div className="flex items-center gap-2 p-3">
         <button
           onClick={onNewTask}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2.5 text-sm font-medium text-white shadow-[var(--shadow)] active:opacity-90"
+          className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2.5 text-sm font-medium text-white shadow-[var(--shadow)] active:opacity-90"
         >
           ＋ Новая задача
+        </button>
+        <button
+          onClick={toggleCollapse}
+          title="Свернуть меню"
+          className="shrink-0 rounded-xl px-2.5 py-2.5 text-muted transition hover:bg-surface-2 hover:text-text"
+        >
+          «
         </button>
       </div>
 

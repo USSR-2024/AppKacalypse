@@ -30,6 +30,7 @@ export default function DocCardPage() {
   const { data: log, mutate: mutateLog } = useSWR<DocActivity[]>(`/documents/${id}/activity`, fetcher);
   const { data: route, mutate: mutateRoute } = useSWR<DocRoute>(`/documents/${id}/route`, fetcher);
   const fileRef = useRef<HTMLInputElement>(null);
+  const signRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [submitOpen, setSubmitOpen] = useState(false);
@@ -84,6 +85,27 @@ export default function DocCardPage() {
     } finally {
       setBusy(false);
       if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  // Подписание: грузим скан подписанного оригинала → документ становится signed.
+  async function uploadSigned(file: File) {
+    setErr(null);
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/documents/${id}/sign?filename=${encodeURIComponent(file.name)}`, {
+        method: "PUT",
+        headers: { "content-type": file.type || "application/octet-stream", authorization: `Bearer ${token}`, "x-workspace": ws },
+        body: file,
+      });
+      if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error || "upload_failed");
+      refresh();
+    } catch (e) {
+      const code = e instanceof Error ? e.message : "";
+      setErr(code === "too_large" ? "Файл больше 100 МБ" : code === "not_approved" ? "Подписать можно только утверждённый документ" : "Не удалось загрузить оригинал");
+    } finally {
+      setBusy(false);
+      if (signRef.current) signRef.current.value = "";
     }
   }
 
@@ -218,6 +240,23 @@ export default function DocCardPage() {
                 />
               </>
             )}
+            {d.canSign && (
+              <>
+                <button
+                  onClick={() => signRef.current?.click()}
+                  disabled={busy}
+                  className="rounded-lg bg-emerald-600/15 px-3 py-1.5 text-xs font-medium text-emerald-600 transition hover:bg-emerald-600/25 disabled:opacity-40"
+                >
+                  {busy ? "Загрузка…" : "✍ Загрузить подписанный оригинал"}
+                </button>
+                <input
+                  ref={signRef}
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => e.target.files?.[0] && uploadSigned(e.target.files[0])}
+                />
+              </>
+            )}
           </div>
         </div>
 
@@ -242,12 +281,22 @@ export default function DocCardPage() {
                     {fileSize(v.fileSize)} · {v.authorName} · {new Date(v.createdAt).toLocaleString("ru-RU")}
                   </div>
                 </div>
-                <button
-                  onClick={() => download(v.id, v.fileName)}
-                  className="shrink-0 rounded-lg bg-surface-2 px-3 py-1.5 text-xs transition hover:text-accent"
-                >
-                  ↓ Скачать
-                </button>
+                <div className="flex shrink-0 items-center gap-2">
+                  {v.id !== d.currentVersionId && isOfficeDoc(v.fileName) && (
+                    <button
+                      onClick={() => router.push(wsHref(ws, `/docs/${id}/edit?v=${v.id}`))}
+                      className="rounded-lg bg-surface-2 px-3 py-1.5 text-xs transition hover:text-accent"
+                    >
+                      👁 Просмотр
+                    </button>
+                  )}
+                  <button
+                    onClick={() => download(v.id, v.fileName)}
+                    className="rounded-lg bg-surface-2 px-3 py-1.5 text-xs transition hover:text-accent"
+                  >
+                    ↓ Скачать
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -263,27 +312,6 @@ export default function DocCardPage() {
           {d.status === "rework" ? "Отправить повторно" : "Отправить на согласование"}
         </button>
       )}
-
-      <section>
-        <button
-          onClick={() => setHistoryOpen((v) => !v)}
-          className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted transition hover:text-text"
-        >
-          <span className={`transition ${historyOpen ? "rotate-90" : ""}`}>▸</span>
-          История {log && log.length > 0 && <span className="font-normal normal-case">({log.length})</span>}
-        </button>
-        {historyOpen && (
-          <div className="flex flex-col gap-1.5">
-            {log?.length ? log.map((a) => (
-              <div key={a.id} className="flex gap-2 text-xs">
-                <span className="shrink-0 text-muted">{new Date(a.at).toLocaleString("ru-RU")}</span>
-                <span>{ACTION_LABEL[a.action] ?? a.action}</span>
-                {a.actorName && <span className="text-muted">— {a.actorName}</span>}
-              </div>
-            )) : <p className="text-xs text-muted">Событий пока нет.</p>}
-          </div>
-        )}
-      </section>
 
       {d.canDelete && (
         <div className="mt-8 border-t border-border pt-4">
@@ -302,15 +330,26 @@ export default function DocCardPage() {
 
       </div>{/* /основная колонка */}
 
-      {/* ── Дорожная карта — доп-панель (справа на десктопе, снизу на мобиле) ── */}
-      {route?.route && (
-        <aside className="mt-6 lg:mt-0 lg:sticky lg:top-4 lg:w-72 lg:shrink-0">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Дорожная карта</h2>
-            {route.route.iteration > 1 && <span className="text-xs text-muted">круг {route.route.iteration}</span>}
-          </div>
-          <div className="rounded-2xl bg-surface px-4 py-4">
-            {route.steps.map((s) => (
+      {/* ── Правая информационная колонка: Статус (этапы) + История ── */}
+      <aside className="mt-6 lg:mt-0 lg:sticky lg:top-4 lg:w-80 lg:shrink-0">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Статус</h2>
+          {route?.route && route.route.iteration > 1 && <span className="text-xs text-muted">круг {route.route.iteration}</span>}
+        </div>
+        <div className="rounded-2xl bg-surface px-4 py-4">
+          {/* Инициация */}
+          <RoadmapNode name="Создан" statusLabel="готово" circle="done" />
+          {/* Пояснительная записка — только если тип её требует */}
+          {d.requiresNote && (
+            <RoadmapNode
+              name="Пояснительная записка"
+              statusLabel={d.hasNote ? "приложена" : "нужна"}
+              circle={d.hasNote ? "done" : "pending"}
+            />
+          )}
+          {/* Согласование — детальные шаги, если маршрут запущен; иначе одиночный узел */}
+          {route?.steps?.length ? (
+            route.steps.map((s) => (
               <RoadmapNode
                 key={s.id}
                 name={s.assigneeName ?? "—"}
@@ -319,16 +358,51 @@ export default function DocCardPage() {
                 decidedAt={s.decidedAt}
                 remarks={remarksByStep(s.id)}
               />
-            ))}
+            ))
+          ) : (
             <RoadmapNode
-              name="Утверждение (ГД)"
-              statusLabel={d.status === "on_signing" ? "на утверждении" : d.status === "approved" ? "утверждено" : "ожидает"}
-              circle={d.status === "on_signing" ? "active" : d.status === "approved" ? "done" : "pending"}
-              last
+              name="Согласование"
+              statusLabel={d.status === "rework" ? "на корректировке" : "ожидает"}
+              circle={d.status === "rework" ? "rejected" : "pending"}
             />
-          </div>
-        </aside>
-      )}
+          )}
+          {/* Утверждение */}
+          <RoadmapNode
+            name="Утверждение"
+            statusLabel={d.status === "on_signing" ? "на утверждении" : ["approved", "signed"].includes(d.status) ? "утверждено" : "ожидает"}
+            circle={d.status === "on_signing" ? "active" : ["approved", "signed"].includes(d.status) ? "done" : "pending"}
+          />
+          {/* Подписание = загрузка подписанного оригинала */}
+          <RoadmapNode
+            name="Подписание"
+            statusLabel={d.status === "signed" ? "подписан" : d.status === "approved" ? "готов к подписанию" : "ожидает"}
+            circle={d.status === "signed" ? "done" : d.status === "approved" ? "active" : "pending"}
+            last
+          />
+        </div>
+
+        {/* История — сворачиваемая, в информационной колонке */}
+        <div className="mt-4">
+          <button
+            onClick={() => setHistoryOpen((v) => !v)}
+            className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted transition hover:text-text"
+          >
+            <span className={`transition ${historyOpen ? "rotate-90" : ""}`}>▸</span>
+            История {log && log.length > 0 && <span className="font-normal normal-case">({log.length})</span>}
+          </button>
+          {historyOpen && (
+            <div className="flex flex-col gap-1.5 rounded-2xl bg-surface px-4 py-3">
+              {log?.length ? log.map((a) => (
+                <div key={a.id} className="flex flex-wrap gap-x-2 text-xs">
+                  <span className="shrink-0 text-muted">{new Date(a.at).toLocaleString("ru-RU")}</span>
+                  <span>{ACTION_LABEL[a.action] ?? a.action}</span>
+                  {a.actorName && <span className="text-muted">— {a.actorName}</span>}
+                </div>
+              )) : <p className="text-xs text-muted">Событий пока нет.</p>}
+            </div>
+          )}
+        </div>
+      </aside>
 
       </div>{/* /две колонки */}
 
