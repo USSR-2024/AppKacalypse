@@ -321,6 +321,8 @@ taskRoutes.delete('/:id', async (c) => {
   const [task] = await db.select().from(t).where(and(eq(t.id, id), eq(t.workspaceId, ws.id))).limit(1);
   if (!task) return c.json({ error: 'not_found' }, 404);
   if (!(await canModify(task, u, ws.role))) return c.json({ error: 'forbidden' }, 403);
+  // Задача-мост из «Документов» — системная: живёт и гаснет вместе с согласованием, руками не удаляем.
+  if (task.documentId) return c.json({ error: 'managed_by_document' }, 409);
 
   await db.delete(t).where(eq(t.id, id));
   return c.json({ ok: true });

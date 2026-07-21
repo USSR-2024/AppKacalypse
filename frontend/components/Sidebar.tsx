@@ -117,7 +117,7 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
                 <Link
                   href={href}
                   className={`flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${
-                    inDocs ? "font-medium text-accent" : "text-muted hover:bg-surface-2 hover:text-text"
+                    inDocs ? "font-medium text-gold" : "text-muted hover:bg-surface-2 hover:text-text"
                   }`}
                 >
                   <span className="text-base">{it.icon}</span>
@@ -130,7 +130,7 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
                         key={s.href}
                         href={wsHref(ws, s.href)}
                         className={`rounded-lg px-3 py-1.5 text-sm transition ${
-                          s.on ? "font-medium text-accent" : "text-muted hover:bg-surface-2 hover:text-text"
+                          s.on ? "font-medium text-gold" : "text-muted hover:bg-surface-2 hover:text-text"
                         }`}
                       >
                         {s.label}
@@ -146,7 +146,7 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
               key={it.href}
               href={href}
               className={`mb-0.5 flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${
-                active ? "bg-surface-2 font-medium text-accent shadow-[var(--shadow)]" : "text-muted hover:bg-surface-2 hover:text-text"
+                active ? "bg-gold-soft font-medium text-gold shadow-[var(--shadow)]" : "text-muted hover:bg-surface-2 hover:text-text"
               }`}
             >
               <span className="text-base">{it.icon}</span>
@@ -158,7 +158,7 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
           const href = wsHref(ws, "/users");
           const active = path.startsWith(href);
           return (
-            <Link href={href} className={`mb-0.5 flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${active ? "bg-surface-2 font-medium text-accent shadow-[var(--shadow)]" : "text-muted hover:bg-surface-2 hover:text-text"}`}>
+            <Link href={href} className={`mb-0.5 flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${active ? "bg-gold-soft font-medium text-gold shadow-[var(--shadow)]" : "text-muted hover:bg-surface-2 hover:text-text"}`}>
               <span className="text-base">🧑‍🤝‍🧑</span>
               Участники
             </Link>
@@ -168,7 +168,7 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
           const href = wsHref(ws, "/protocol");
           const active = path.startsWith(href);
           return (
-            <Link href={href} className={`mb-0.5 flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${active ? "bg-surface-2 font-medium text-accent shadow-[var(--shadow)]" : "text-muted hover:bg-surface-2 hover:text-text"}`}>
+            <Link href={href} className={`mb-0.5 flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${active ? "bg-gold-soft font-medium text-gold shadow-[var(--shadow)]" : "text-muted hover:bg-surface-2 hover:text-text"}`}>
               <span className="text-base">🎙</span>
               Расшифровки
             </Link>

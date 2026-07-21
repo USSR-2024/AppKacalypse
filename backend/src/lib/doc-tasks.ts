@@ -103,8 +103,8 @@ export async function openStepTasks(tx: Db, m: DocMeta): Promise<void> {
       title: `Согласовать: ${m.docTitle}`,
       description: `${num}Вас назначили согласующим. Задача закроется сама, когда вы согласуете или вернёте документ.`,
       assigneeId: s.assigneeId,
-      controllerId: s.assigneeId,  // своей задачей владеет сам согласующий
-      creatorId: m.authorId,       // создана от имени инициатора
+      controllerId: m.authorId,    // контролирует инициатор (оверсайт хода согласования)
+      creatorId: m.authorId,
       dueAt: m.dueAt,
     });
     await tx.update(RS).set({ taskId }).where(eq(RS.id, s.id));

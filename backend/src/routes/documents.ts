@@ -287,14 +287,15 @@ documentRoutes.get('/:id', async (c) => {
 const createSchema = z.object({
   title: z.string().trim().min(1).max(500),
   typeId: z.string().uuid(),
-  description: z.string().max(10000).optional(),
+  // nullable — правка сведений очищает поле, присылая null (иначе Zod роняет в 400).
+  description: z.string().max(10000).nullable().optional(),
   counterpartyId: z.string().uuid().nullable().optional(),   // из справочника (M2)
-  counterpartyName: z.string().max(500).optional(),          // свободный ввод (fallback)
+  counterpartyName: z.string().max(500).nullable().optional(),          // свободный ввод (fallback)
   priority: z.enum(['critical', 'urgent', 'important', 'low']).optional(),
-  priorityReason: z.string().max(1000).optional(),
-  dueAt: z.string().datetime({ offset: true }).optional(),
-  amount: z.number().optional(),
-  currency: z.string().length(3).optional(),
+  priorityReason: z.string().max(1000).nullable().optional(),
+  dueAt: z.string().datetime({ offset: true }).nullable().optional(),
+  amount: z.number().nullable().optional(),
+  currency: z.string().length(3).nullable().optional(),
 });
 
 documentRoutes.post('/', async (c) => {

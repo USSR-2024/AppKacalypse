@@ -6,6 +6,7 @@ import { fetcher, api } from "@/lib/api";
 import { useAuth } from "@/lib/store";
 import { useWs, wsHref } from "@/lib/ws";
 import { Sheet } from "@/components/Sheet";
+import { ConfirmSheet } from "@/components/ConfirmSheet";
 import { DOC_PRIORITY, StatusChip, STEP_STATUS, STEP_DOT, fileSize, isOfficeDoc } from "@/lib/docStrings";
 import type { DocCard, DocActivity, DocRoute, DocMember, DocRoutePreview, DocCounterparty, DocPriority } from "@/lib/types";
 
@@ -33,6 +34,8 @@ export default function DocCardPage() {
   const [err, setErr] = useState<string | null>(null);
   const [submitOpen, setSubmitOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [decision, setDecision] = useState<"approve" | "reject" | null>(null);
 
   if (!d) return <main className="px-4 pt-12"><p className="text-sm text-muted">Загрузка…</p></main>;
@@ -47,7 +50,7 @@ export default function DocCardPage() {
   }
 
   async function remove() {
-    if (!confirm("Удалить карточку документа? Необратимо: удалятся все версии, история и маршрут; связанные задачи-напоминания закроются.")) return;
+    setConfirmDel(false);
     setBusy(true);
     setErr(null);
     try {
@@ -275,22 +278,30 @@ export default function DocCardPage() {
       )}
 
       <section>
-        <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">История</h2>
-        <div className="flex flex-col gap-1.5">
-          {log?.map((a) => (
-            <div key={a.id} className="flex gap-2 text-xs">
-              <span className="shrink-0 text-muted">{new Date(a.at).toLocaleString("ru-RU")}</span>
-              <span>{ACTION_LABEL[a.action] ?? a.action}</span>
-              {a.actorName && <span className="text-muted">— {a.actorName}</span>}
-            </div>
-          ))}
-        </div>
+        <button
+          onClick={() => setHistoryOpen((v) => !v)}
+          className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted transition hover:text-text"
+        >
+          <span className={`transition ${historyOpen ? "rotate-90" : ""}`}>▸</span>
+          История {log && log.length > 0 && <span className="font-normal normal-case">({log.length})</span>}
+        </button>
+        {historyOpen && (
+          <div className="flex flex-col gap-1.5">
+            {log?.length ? log.map((a) => (
+              <div key={a.id} className="flex gap-2 text-xs">
+                <span className="shrink-0 text-muted">{new Date(a.at).toLocaleString("ru-RU")}</span>
+                <span>{ACTION_LABEL[a.action] ?? a.action}</span>
+                {a.actorName && <span className="text-muted">— {a.actorName}</span>}
+              </div>
+            )) : <p className="text-xs text-muted">Событий пока нет.</p>}
+          </div>
+        )}
       </section>
 
       {d.canDelete && (
         <div className="mt-8 border-t border-border pt-4">
           <button
-            onClick={remove}
+            onClick={() => setConfirmDel(true)}
             disabled={busy}
             className="text-sm text-muted transition hover:text-danger disabled:opacity-40"
           >
@@ -300,6 +311,17 @@ export default function DocCardPage() {
             {d.canManage ? "Для чистки ошибочных или тестовых карточек." : "Пока документ не ушёл в дело."}
           </p>
         </div>
+      )}
+
+      {confirmDel && (
+        <ConfirmSheet
+          title="Удалить карточку документа?"
+          message="Необратимо: удалятся все версии, история и маршрут; связанные задачи-напоминания закроются."
+          confirmLabel="Удалить"
+          danger
+          onConfirm={remove}
+          onCancel={() => setConfirmDel(false)}
+        />
       )}
 
       {editOpen && (
