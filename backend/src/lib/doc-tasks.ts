@@ -133,3 +133,10 @@ export async function closeTrackingTask(tx: Db, documentId: string): Promise<voi
   const [d] = await tx.select({ taskId: DOC.approvalTaskId }).from(DOC).where(eq(DOC.id, documentId)).limit(1);
   if (d?.taskId) await complete(tx, d.taskId);
 }
+
+/** Удаление карточки → удалить ВСЕ задачи-мосты документа целиком (иначе повиснут во
+ * «Входящих» и будут указывать на несуществующий документ). Звать ДО delete карточки:
+ * пока route_steps ещё живы, их FK task_id занулится без конфликта с каскадом. */
+export async function purgeDocTasks(tx: Db, documentId: string): Promise<void> {
+  await tx.delete(T).where(eq(T.documentId, documentId));   // task_assignees уйдут каскадом
+}

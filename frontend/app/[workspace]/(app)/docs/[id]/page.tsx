@@ -45,6 +45,19 @@ export default function DocCardPage() {
     mutateRoute();
   }
 
+  async function remove() {
+    if (!confirm("Удалить карточку документа? Необратимо: удалятся все версии, история и маршрут; связанные задачи-напоминания закроются.")) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/documents/${id}`, { method: "DELETE" });
+      router.push(wsHref(ws, "/docs"));
+    } catch {
+      setErr("Не удалось удалить карточку");
+      setBusy(false);
+    }
+  }
+
   async function upload(file: File) {
     setErr(null);
     setBusy(true);
@@ -261,6 +274,21 @@ export default function DocCardPage() {
           ))}
         </div>
       </section>
+
+      {d.canDelete && (
+        <div className="mt-8 border-t border-border pt-4">
+          <button
+            onClick={remove}
+            disabled={busy}
+            className="text-sm text-muted transition hover:text-danger disabled:opacity-40"
+          >
+            🗑 Удалить карточку
+          </button>
+          <p className="mt-1 text-xs text-muted">
+            {d.canManage ? "Для чистки ошибочных или тестовых карточек." : "Пока документ не ушёл в дело."}
+          </p>
+        </div>
+      )}
 
       {submitOpen && (
         <SubmitSheet

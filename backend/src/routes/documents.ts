@@ -10,7 +10,7 @@ import { nextRegistryNumber, visibilityCond, canView, getDocPerms, isFeatureEnab
 import { putVersion, getVersionStream } from '../lib/dms-storage.js';
 import { BLANK_DOCX_B64 } from '../lib/blank-docx.js';
 import { startRoute, activeStepForUser, approveStep, rejectStep, assembleMatrix, type RouteStepInput } from '../lib/route-engine.js';
-import { openTrackingTask, openStepTasks, closeStepTask, cancelOpenStepTasks, closeTrackingTask, type DocMeta } from '../lib/doc-tasks.js';
+import { openTrackingTask, openStepTasks, closeStepTask, cancelOpenStepTasks, closeTrackingTask, purgeDocTasks, type DocMeta } from '../lib/doc-tasks.js';
 import { notifyApprovalStep, notifyApprovalDecision } from '../lib/notify.js';
 import { env } from '../lib/env.js';
 import {
@@ -275,7 +275,10 @@ documentRoutes.get('/:id', async (c) => {
   const canEdit = row.status === 'draft' && mine;
   // Отправить на согласование может владелец карточки из черновика или из корректировки.
   const canSubmit = (row.status === 'draft' || row.status === 'rework') && mine;
-  return c.json({ ...row, versions, canEdit, canSubmit, canManage: perms.canManage });
+  // Удалить: глава — любую (чистка ошибочных/тестовых); автор/ответственный — свою, пока
+  // она не ушла в дело (черновик/корректировка/отменена). Подписанные из реестра не трогаем.
+  const canDelete = perms.canManage || (mine && ['draft', 'rework', 'cancelled'].includes(row.status));
+  return c.json({ ...row, versions, canEdit, canSubmit, canManage: perms.canManage, canDelete });
 });
 
 // ── Создание ─────────────────────────────────────────────────────────────────
@@ -391,6 +394,31 @@ documentRoutes.patch('/:id', async (c) => {
       workspaceId: w.id, documentId: id, entity: 'document', entityId: id,
       actorId: u.sub, action: 'edited', payload: { fields: Object.keys(patch).filter((k) => k !== 'updatedAt') },
     });
+  });
+  return c.json({ ok: true });
+});
+
+// ── Удаление карточки ────────────────────────────────────────────────────────
+// Чистка ошибочных/тестовых карточек. Глава — любую; автор/ответственный — свою, пока
+// она не ушла в дело (draft/rework/cancelled). Каскад БД снимает версии/маршрут/аудит;
+// задачи-мосты гасим явно (иначе повиснут во «Входящих» на удалённый документ).
+// Файлы версий в MinIO остаются (Object Lock; для ручной чистки тестов допустимо).
+documentRoutes.delete('/:id', async (c) => {
+  const w = c.get('workspace');
+  const u = c.get('user');
+  const id = c.req.param('id')!;
+  const [row] = await db.select({ status: doc.status, ownerId: doc.ownerId, authorId: doc.authorId, registryNumber: doc.registryNumber })
+    .from(doc).where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
+  if (!row) return c.json({ error: 'not_found' }, 404);
+
+  const perms = c.get('docPerms');
+  const mine = row.ownerId === u.sub || row.authorId === u.sub;
+  const allowed = perms.canManage || (mine && ['draft', 'rework', 'cancelled'].includes(row.status));
+  if (!allowed) return c.json({ error: 'forbidden' }, 403);
+
+  await db.transaction(async (tx) => {
+    await purgeDocTasks(tx, id);   // ДО удаления карточки — снять задачи-мосты
+    await tx.delete(doc).where(eq(doc.id, id));
   });
   return c.json({ ok: true });
 });
