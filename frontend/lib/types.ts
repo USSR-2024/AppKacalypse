@@ -196,8 +196,12 @@ export interface DocRow {
   counterpartyId: string | null;
   counterpartyName: string | null;
   typeName: string | null;
+  typeId?: string;
   groupName: string | null;
+  groupId?: string | null;
   ownerName: string | null;
+  ownerId?: string;
+  dateSigned?: string | null;
   createdAt: string;
   updatedAt: string;
 }

@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { Readable } from 'node:stream';
 import { extname } from 'node:path';
-import { and, desc, eq, inArray, isNotNull, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, lt, lte, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '../db/index.js';
 import { requireAuth } from '../lib/auth-middleware.js';
@@ -77,6 +77,12 @@ documentRoutes.get('/', async (c) => {
   if (groupId) conds.push(eq(doc.groupId, groupId));
   const typeId = c.req.query('typeId');
   if (typeId) conds.push(eq(doc.typeId, typeId));
+  const ownerId = c.req.query('ownerId');            // фасет «ответственный»
+  if (ownerId) conds.push(eq(doc.ownerId, ownerId));
+  const createdFrom = c.req.query('createdFrom');    // период регистрации (dueBefore-стиль)
+  if (createdFrom) conds.push(gte(doc.createdAt, new Date(createdFrom)));
+  const createdTo = c.req.query('createdTo');
+  if (createdTo) conds.push(lte(doc.createdAt, new Date(createdTo)));
 
   // Личные срезы: «мои» (я автор или ответственный) и «просрочено» (срок в прошлом).
   if (c.req.query('mine') === '1') conds.push(or(eq(doc.authorId, u.sub), eq(doc.ownerId, u.sub))!);
@@ -86,8 +92,8 @@ documentRoutes.get('/', async (c) => {
     .select({
       id: doc.id, registryNumber: doc.registryNumber, title: doc.title, status: doc.status,
       priority: doc.priority, dueAt: doc.dueAt, counterpartyName: doc.counterpartyName, counterpartyId: doc.counterpartyId,
-      typeName: schema.docTypes.name, groupName: schema.docGroups.name,
-      ownerName: schema.users.displayName,
+      typeName: schema.docTypes.name, typeId: doc.typeId, groupName: schema.docGroups.name, groupId: doc.groupId,
+      ownerName: schema.users.displayName, ownerId: doc.ownerId, dateSigned: doc.dateSigned,
       createdAt: doc.createdAt, updatedAt: doc.updatedAt,
     })
     .from(doc)
