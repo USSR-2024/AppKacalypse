@@ -78,7 +78,7 @@ export default function AssistantPage() {
 
   return (
     <>
-      <div className="px-4 pt-12 pb-44">
+      <div className="mx-auto max-w-3xl px-4 pt-12 pb-40">
         <h1 className="mb-4 text-2xl font-semibold">Ассистент</h1>
         {messages.map((m) => (
           <div key={m.id} className={`mb-3 flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
@@ -104,10 +104,10 @@ export default function AssistantPage() {
         <div ref={endRef} />
       </div>
 
-      {/* Полноширинная панель ввода; на десктопе сдвинута на ширину сайдбара (--sbw),
-          ввод отцентрован по ширине контента — не выглядит «мобильным». */}
-      <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+58px)] z-30 border-t border-border bg-surface/95 backdrop-blur lg:bottom-0 lg:pl-[var(--sbw)]">
-        <div className="mx-auto flex max-w-md items-end gap-2 px-4 py-3 lg:max-w-5xl lg:px-6">
+      {/* Ввод — отдельный аккуратный блок по ширине чат-колонки (не подвал во всю ширину).
+          Сдвинут на ширину сайдбара (--sbw), чтобы стоять под контентом. */}
+      <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+58px)] z-30 px-4 lg:bottom-4 lg:pl-[calc(var(--sbw)+1rem)]">
+        <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border border-border bg-surface p-2 shadow-[var(--shadow-strong)]">
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
