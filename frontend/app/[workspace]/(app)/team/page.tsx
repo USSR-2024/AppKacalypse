@@ -37,9 +37,16 @@ export default function TeamPage() {
   return (
     <main className="px-4 pt-12">
       <WsLink href="/profile" className="text-sm text-muted">‹ Профиль</WsLink>
-      <header className="mb-5 mt-2">
-        <h1 className="text-2xl font-semibold">Команда</h1>
-        <p className="mt-1 text-sm text-muted">Коллеги и команды для проектов</p>
+      <header className="mb-5 mt-2 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">Команда</h1>
+          <p className="mt-1 text-sm text-muted">Коллеги и команды для проектов</p>
+        </div>
+        {isWsAdmin && (
+          <WsLink href="/users" className="shrink-0 rounded-lg bg-surface px-3 py-1.5 text-xs text-muted transition hover:text-text">
+            ⚙ Участники пространства
+          </WsLink>
+        )}
       </header>
 
       {/* Команды */}

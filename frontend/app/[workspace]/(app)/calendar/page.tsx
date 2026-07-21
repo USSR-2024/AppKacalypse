@@ -59,7 +59,8 @@ export default function CalendarPage() {
         </div>
       </header>
 
-      <div className="mb-3 rounded-2xl bg-surface p-2">
+      {/* max-w — иначе на широком десктопе aspect-square ячейки становятся огромными и месяц уезжает вниз. */}
+      <div className="mb-3 max-w-md rounded-2xl bg-surface p-2">
         <div className="mb-1 flex items-center justify-between">
           <button onClick={() => step(-1)} aria-label="Назад" className="rounded-lg px-3 py-1 text-lg text-muted active:bg-surface-2">‹</button>
           <span className="text-sm font-medium capitalize">{label}</span>

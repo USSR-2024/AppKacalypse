@@ -54,6 +54,10 @@
   --shadow-strong: var(--shadow-strong);
 }
 
+/* Ширина десктопного сайдбара — чтобы fixed-элементы (ввод ассистента) вставали под
+   контент, а не под сайдбар. Меняется из Sidebar при сворачивании. */
+:root { --sbw: 260px; }
+
 html, body {
   background: var(--bg);
   color: var(--text);

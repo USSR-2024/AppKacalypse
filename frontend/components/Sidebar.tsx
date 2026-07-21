@@ -40,6 +40,8 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
   const [switcher, setSwitcher] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   useEffect(() => { setCollapsed(localStorage.getItem("sidebar-collapsed") === "1"); }, []);
+  // Отдаём ширину сайдбара в CSS-переменную: fixed-элементы (ввод ассистента) встают под контент.
+  useEffect(() => { document.documentElement.style.setProperty("--sbw", collapsed ? "56px" : "260px"); }, [collapsed]);
   function toggleCollapse() {
     setCollapsed((v) => { localStorage.setItem("sidebar-collapsed", v ? "0" : "1"); return !v; });
   }
@@ -65,7 +67,6 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
         <button onClick={toggleCollapse} title="Развернуть меню" className="mb-2 rounded-lg px-2 py-1.5 text-muted transition hover:bg-surface-2 hover:text-text">»</button>
         <nav className="flex flex-1 flex-col items-center gap-1 overflow-y-auto">
           {NAV.map((it) => iconLink(it.href, it.icon, it.label))}
-          {isAdmin && iconLink("/users", "🧑‍🤝‍🧑", "Участники")}
           {isAdmin && iconLink("/protocol", "🎙", "Расшифровки")}
         </nav>
         <Link href={wsHref(ws, "/profile")} title="Профиль" className="mt-2">
@@ -196,16 +197,6 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
             </Link>
           );
         })}
-        {(current?.role === "admin" || current?.role === "owner") && (() => {
-          const href = wsHref(ws, "/users");
-          const active = path.startsWith(href);
-          return (
-            <Link href={href} className={`mb-0.5 flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${active ? "bg-gold-soft font-medium text-gold shadow-[var(--shadow)]" : "text-muted hover:bg-surface-2 hover:text-text"}`}>
-              <span className="text-base">🧑‍🤝‍🧑</span>
-              Участники
-            </Link>
-          );
-        })()}
         {(current?.role === "admin" || current?.role === "owner") && (() => {
           const href = wsHref(ws, "/protocol");
           const active = path.startsWith(href);

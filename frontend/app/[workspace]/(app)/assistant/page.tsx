@@ -104,11 +104,10 @@ export default function AssistantPage() {
         <div ref={endRef} />
       </div>
 
-      <div
-        style={{ bottom: "calc(env(safe-area-inset-bottom) + 58px)" }}
-        className="fixed inset-x-0 z-30 mx-auto max-w-md border-t border-border bg-surface/95 p-3 backdrop-blur"
-      >
-        <div className="flex items-end gap-2">
+      {/* Полноширинная панель ввода; на десктопе сдвинута на ширину сайдбара (--sbw),
+          ввод отцентрован по ширине контента — не выглядит «мобильным». */}
+      <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+58px)] z-30 border-t border-border bg-surface/95 backdrop-blur lg:bottom-0 lg:pl-[var(--sbw)]">
+        <div className="mx-auto flex max-w-md items-end gap-2 px-4 py-3 lg:max-w-5xl lg:px-6">
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
