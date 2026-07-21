@@ -35,13 +35,15 @@ export const signCallbackToken = (documentId: string) =>
 const WORD = new Set(['.docx', '.doc', '.odt', '.rtf', '.txt']);
 const CELL = new Set(['.xlsx', '.xls', '.ods', '.csv']);
 const SLIDE = new Set(['.pptx', '.ppt', '.odp']);
+const PDF = new Set(['.pdf']);   // DS 9.x открывает PDF своим вьювером (у нас — только просмотр)
 
 /** Тип редактора по расширению. null = ONLYOFFICE такое не открывает (кнопки редактора нет). */
-export function docType(fileName: string): { documentType: 'word' | 'cell' | 'slide'; fileType: string } | null {
+export function docType(fileName: string): { documentType: 'word' | 'cell' | 'slide' | 'pdf'; fileType: string } | null {
   const ext = extname(fileName).toLowerCase();
   if (WORD.has(ext)) return { documentType: 'word', fileType: ext.slice(1) };
   if (CELL.has(ext)) return { documentType: 'cell', fileType: ext.slice(1) };
   if (SLIDE.has(ext)) return { documentType: 'slide', fileType: ext.slice(1) };
+  if (PDF.has(ext)) return { documentType: 'pdf', fileType: ext.slice(1) };
   return null;
 }
 

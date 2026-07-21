@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/store";
 import { useWs, wsHref } from "@/lib/ws";
 import { Sheet } from "@/components/Sheet";
 import { ConfirmSheet } from "@/components/ConfirmSheet";
-import { DOC_PRIORITY, StatusChip, STEP_STATUS, fileSize, isOfficeDoc } from "@/lib/docStrings";
+import { DOC_PRIORITY, StatusChip, STEP_STATUS, fileSize, isPdfDoc, isViewable } from "@/lib/docStrings";
 import type { DocCard, DocActivity, DocRoute, DocMember, DocRoutePreview, DocCounterparty, DocPriority } from "@/lib/types";
 
 // Человеческие подписи событий журнала: в БД лежат коды (created, version_saved…).
@@ -215,14 +215,18 @@ export default function DocCardPage() {
         <div className="mb-2 flex items-center justify-between gap-2">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Версии</h2>
           <div className="flex items-center gap-2">
-            {d.currentVersionId && isOfficeDoc(d.versions.find((v) => v.id === d.currentVersionId)?.fileName) && (
-              <button
-                onClick={() => router.push(wsHref(ws, `/docs/${id}/edit`))}
-                className="rounded-lg bg-accent/10 px-3 py-1.5 text-xs text-accent transition hover:bg-accent/20"
-              >
-                ✎ Открыть в редакторе
-              </button>
-            )}
+            {d.currentVersionId && isViewable(d.versions.find((v) => v.id === d.currentVersionId)?.fileName) && (() => {
+              const curName = d.versions.find((v) => v.id === d.currentVersionId)?.fileName;
+              const pdf = isPdfDoc(curName);
+              return (
+                <button
+                  onClick={() => router.push(wsHref(ws, `/docs/${id}/edit`))}
+                  className="rounded-lg bg-accent/10 px-3 py-1.5 text-xs text-accent transition hover:bg-accent/20"
+                >
+                  {pdf ? "👁 Просмотр" : "✎ Открыть в редакторе"}
+                </button>
+              );
+            })()}
             {canUpload && (
               <>
                 <button
@@ -282,7 +286,7 @@ export default function DocCardPage() {
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  {v.id !== d.currentVersionId && isOfficeDoc(v.fileName) && (
+                  {v.id !== d.currentVersionId && isViewable(v.fileName) && (
                     <button
                       onClick={() => router.push(wsHref(ws, `/docs/${id}/edit?v=${v.id}`))}
                       className="rounded-lg bg-surface-2 px-3 py-1.5 text-xs transition hover:text-accent"

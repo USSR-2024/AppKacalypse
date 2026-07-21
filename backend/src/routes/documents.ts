@@ -922,8 +922,10 @@ documentRoutes.get('/:id/editor-config', async (c) => {
   if (!dt) return c.json({ error: 'not_editable' }, 400);   // не офисный формат — редактора нет
 
   const rel = await approverRelation(id, u.sub);
-  const access = isOldVersion
-    ? { mode: 'view' as const, edit: false, review: false, comment: false, trackChanges: false }   // старая версия — только чтение
+  // PDF и старые версии — только просмотр (PDF не редактируем: это скан/оригинал/вложение).
+  const viewOnly = isOldVersion || dt.documentType === 'pdf';
+  const access = viewOnly
+    ? { mode: 'view' as const, edit: false, review: false, comment: false, trackChanges: false }
     : resolveAccess({
         status: row.status,
         isAuthor: c.get('docPerms').canManage || row.authorId === u.sub || row.ownerId === u.sub,

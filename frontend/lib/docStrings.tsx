@@ -64,9 +64,13 @@ export const STEP_DOT: Record<StepStatus, string> = {
   skipped: "bg-surface-2",
 };
 
-// Форматы, которые открывает ONLYOFFICE (иначе кнопки редактора нет).
+// Форматы, которые открывает ONLYOFFICE на РЕДАКТИРОВАНИЕ (docx и т.п.).
 const OFFICE_EXT = /\.(docx?|odt|rtf|txt|xlsx?|ods|csv|pptx?|odp)$/i;
 export const isOfficeDoc = (fileName?: string): boolean => !!fileName && OFFICE_EXT.test(fileName);
+// PDF — только просмотр (DS 9.x открывает своим вьювером).
+export const isPdfDoc = (fileName?: string): boolean => !!fileName && /\.pdf$/i.test(fileName);
+// Всё, что можно открыть в ONLYOFFICE (редактор или просмотр PDF).
+export const isViewable = (fileName?: string): boolean => isOfficeDoc(fileName) || isPdfDoc(fileName);
 
 export function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} Б`;
