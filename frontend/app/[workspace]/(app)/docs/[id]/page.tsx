@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/store";
 import { useWs, wsHref } from "@/lib/ws";
 import { Sheet } from "@/components/Sheet";
 import { DOC_PRIORITY, StatusChip, STEP_STATUS, STEP_DOT, fileSize, isOfficeDoc } from "@/lib/docStrings";
-import type { DocCard, DocActivity, DocRoute, DocMember, DocRoutePreview } from "@/lib/types";
+import type { DocCard, DocActivity, DocRoute, DocMember, DocRoutePreview, DocCounterparty, DocPriority } from "@/lib/types";
 
 // Человеческие подписи событий журнала: в БД лежат коды (created, version_saved…).
 const ACTION_LABEL: Record<string, string> = {
@@ -32,6 +32,7 @@ export default function DocCardPage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [submitOpen, setSubmitOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [decision, setDecision] = useState<"approve" | "reject" | null>(null);
 
   if (!d) return <main className="px-4 pt-12"><p className="text-sm text-muted">Загрузка…</p></main>;
@@ -109,7 +110,18 @@ export default function DocCardPage() {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             {d.registryNumber && <div className="font-mono text-xs text-muted">{d.registryNumber}</div>}
-            <h1 className="text-xl font-semibold">{d.title}</h1>
+            <div className="flex items-start gap-2">
+              <h1 className="text-xl font-semibold">{d.title}</h1>
+              {d.canRename && (
+                <button
+                  onClick={() => setEditOpen(true)}
+                  title="Изменить название и сведения"
+                  className="mt-1 shrink-0 rounded-lg px-1.5 py-0.5 text-sm text-muted transition hover:bg-surface hover:text-accent"
+                >
+                  ✎
+                </button>
+              )}
+            </div>
           </div>
           <StatusChip status={d.status} />
         </div>
@@ -290,6 +302,14 @@ export default function DocCardPage() {
         </div>
       )}
 
+      {editOpen && (
+        <EditCardSheet
+          doc={d}
+          onClose={() => setEditOpen(false)}
+          onDone={() => { setEditOpen(false); refresh(); }}
+        />
+      )}
+
       {submitOpen && (
         <SubmitSheet
           docId={id}
@@ -313,11 +333,102 @@ export default function DocCardPage() {
 
 // Отправка на согласование. Если у типа есть матрица — маршрут собран заранее,
 // показываем предпросмотр (только чтение). Иначе — ручной выбор людей по порядку.
+// Правка сведений карточки. Название/описание — на любом статусе; контрагент/приоритет —
+// только в черновике (после отправки поля зафиксированы вместе с содержанием).
+function EditCardSheet({ doc, onClose, onDone }: { doc: DocCard; onClose: () => void; onDone: () => void }) {
+  const draft = doc.canEdit;   // canEdit = черновик и моё
+  const { data: counterparties } = useSWR<DocCounterparty[]>(draft ? "/documents/counterparties" : null, fetcher);
+  const [title, setTitle] = useState(doc.title);
+  const [description, setDescription] = useState(doc.description ?? "");
+  const [cpChoice, setCpChoice] = useState(doc.counterpartyId ?? (doc.counterpartyName ? "__free__" : ""));
+  const [cpFree, setCpFree] = useState(doc.counterpartyId ? "" : (doc.counterpartyName ?? ""));
+  const [priority, setPriority] = useState<DocPriority>(doc.priority);
+  const [reason, setReason] = useState(doc.priorityReason ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function save() {
+    if (!title.trim()) return setErr("Название не может быть пустым");
+    if (draft && priority === "critical" && !reason.trim()) return setErr("Критический приоритет требует обоснования");
+    setBusy(true);
+    setErr(null);
+    try {
+      const body: Record<string, unknown> = { title: title.trim(), description: description.trim() || null };
+      if (draft) {
+        body.priority = priority;
+        body.priorityReason = priority === "critical" ? reason.trim() : null;
+        if (cpChoice === "__free__") { body.counterpartyId = null; body.counterpartyName = cpFree.trim() || null; }
+        else if (cpChoice) body.counterpartyId = cpChoice;
+        else { body.counterpartyId = null; body.counterpartyName = null; }
+      }
+      await api(`/documents/${doc.id}`, { method: "PATCH", body: JSON.stringify(body) });
+      onDone();
+    } catch (e) {
+      setErr(e instanceof Error && e.message === "only_title_after_draft" ? "После отправки можно менять только название и описание" : "Не удалось сохранить");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Sheet onClose={onClose} size="lg">
+      <h2 className="mb-1 text-lg font-semibold">Сведения о документе</h2>
+      {!draft && <p className="mb-3 text-xs text-muted">Документ уже в работе — меняется только название и описание.</p>}
+
+      <label className="text-xs text-muted">Название документа</label>
+      <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)}
+        className="mb-3 mt-1 w-full rounded-xl bg-surface px-3 py-2.5 text-sm outline-none" />
+
+      <label className="text-xs text-muted">Описание</label>
+      <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2}
+        className="mb-3 mt-1 w-full resize-none rounded-xl bg-surface px-3 py-2.5 text-sm outline-none" />
+
+      {draft && (
+        <>
+          <label className="text-xs text-muted">Контрагент</label>
+          <select value={cpChoice} onChange={(e) => setCpChoice(e.target.value)}
+            className="mb-3 mt-1 w-full rounded-xl bg-surface px-3 py-2.5 text-sm outline-none">
+            <option value="">— не указан —</option>
+            {counterparties?.map((c) => <option key={c.id} value={c.id}>{c.name}{c.inn ? ` (ИНН ${c.inn})` : ""}</option>)}
+            <option value="__free__">Ввести вручную…</option>
+          </select>
+          {cpChoice === "__free__" && (
+            <input value={cpFree} onChange={(e) => setCpFree(e.target.value)} placeholder="ООО «Ромашка»"
+              className="mb-3 w-full rounded-xl bg-surface px-3 py-2.5 text-sm outline-none" />
+          )}
+
+          <label className="text-xs text-muted">Приоритет</label>
+          <div className="mb-3 mt-1 flex gap-1">
+            {(Object.keys(DOC_PRIORITY) as DocPriority[]).map((p) => (
+              <button key={p} onClick={() => setPriority(p)}
+                className={`flex-1 rounded-lg px-2 py-2 text-xs transition ${priority === p ? "bg-accent text-white" : "bg-surface text-muted hover:text-text"}`}>
+                {DOC_PRIORITY[p]}
+              </button>
+            ))}
+          </div>
+          {priority === "critical" && (
+            <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Обоснование критичности"
+              className="mb-3 w-full rounded-xl bg-surface px-3 py-2.5 text-sm outline-none" />
+          )}
+        </>
+      )}
+
+      {err && <p className="mb-3 text-sm text-danger">{err}</p>}
+      <div className="flex gap-2">
+        <button onClick={onClose} className="flex-1 rounded-xl bg-surface px-4 py-3 text-sm font-medium">Отмена</button>
+        <button onClick={save} disabled={busy} className="flex-1 rounded-xl bg-accent px-4 py-3 text-sm font-medium text-white disabled:opacity-40">
+          {busy ? "Сохраняем…" : "Сохранить"}
+        </button>
+      </div>
+    </Sheet>
+  );
+}
+
 function SubmitSheet({ docId, rework, onClose, onDone }: { docId: string; rework: boolean; onClose: () => void; onDone: () => void }) {
   const { data: preview } = useSWR<DocRoutePreview>(`/documents/${docId}/route-preview`, fetcher);
   const matrix = preview?.mode === "matrix";
   const { data: members } = useSWR<DocMember[]>(preview && !matrix ? "/documents/members" : null, fetcher);
   const [chain, setChain] = useState<string[]>([]);
+  const [dueAt, setDueAt] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -329,7 +440,9 @@ function SubmitSheet({ docId, rework, onClose, onDone }: { docId: string; rework
     if (!matrix && chain.length === 0) return setErr("Выберите хотя бы одного согласующего");
     setBusy(true);
     try {
-      await api(`/documents/${docId}/submit`, { method: "POST", body: JSON.stringify(matrix ? {} : { approvers: chain }) });
+      const body: Record<string, unknown> = matrix ? {} : { approvers: chain };
+      if (dueAt) body.dueAt = new Date(dueAt).toISOString();
+      await api(`/documents/${docId}/submit`, { method: "POST", body: JSON.stringify(body) });
       onDone();
     } catch (e) {
       const code = e instanceof Error ? e.message : "";
@@ -417,6 +530,19 @@ function SubmitSheet({ docId, rework, onClose, onDone }: { docId: string; rework
             ))}
           </div>
         </>
+      )}
+
+      {preview && (
+        <div className="mb-4">
+          <label className="text-xs text-muted">Крайний срок согласования (необязательно)</label>
+          <input
+            type="date"
+            value={dueAt}
+            onChange={(e) => setDueAt(e.target.value)}
+            className="mt-1 w-full rounded-xl bg-surface px-3 py-2.5 text-sm outline-none"
+          />
+          <p className="mt-1 text-xs text-muted">Попадёт в срез «Просрочено», если к сроку не согласуют.</p>
+        </div>
       )}
 
       {err && <p className="mb-3 text-sm text-danger">{err}</p>}

@@ -278,7 +278,9 @@ documentRoutes.get('/:id', async (c) => {
   // Удалить: глава — любую (чистка ошибочных/тестовых); автор/ответственный — свою, пока
   // она не ушла в дело (черновик/корректировка/отменена). Подписанные из реестра не трогаем.
   const canDelete = perms.canManage || (mine && ['draft', 'rework', 'cancelled'].includes(row.status));
-  return c.json({ ...row, versions, canEdit, canSubmit, canManage: perms.canManage, canDelete });
+  // Править сведения (название/описание — на любом статусе; остальное — только в черновике).
+  const canRename = mine;
+  return c.json({ ...row, versions, canEdit, canSubmit, canManage: perms.canManage, canDelete, canRename });
 });
 
 // ── Создание ─────────────────────────────────────────────────────────────────
@@ -360,33 +362,42 @@ documentRoutes.patch('/:id', async (c) => {
   const [row] = await db.select().from(doc).where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
   if (!row) return c.json({ error: 'not_found' }, 404);
   if (!c.get('docPerms').canManage && row.ownerId !== u.sub && row.authorId !== u.sub) return c.json({ error: 'forbidden' }, 403);
-  // Ушедшую на согласование карточку не правим: у согласующих на руках её содержимое.
-  if (row.status !== 'draft') return c.json({ error: 'not_draft' }, 409);
 
   const d = p.data;
+  const isDraft = row.status === 'draft';
+  // Название и описание — метаданные-ярлык, их можно поправить на любом статусе (файл,
+  // который смотрят согласующие, они не меняют). Остальные поля — только в черновике:
+  // после отправки контрагент/приоритет/сумма зафиксированы вместе с содержанием.
+  const contentFieldSent = d.counterpartyId !== undefined || d.counterpartyName !== undefined ||
+    d.priority !== undefined || d.priorityReason !== undefined || d.dueAt !== undefined ||
+    d.amount !== undefined || d.currency !== undefined;
+  if (!isDraft && contentFieldSent) return c.json({ error: 'only_title_after_draft' }, 409);
+
   const patch: Record<string, unknown> = { updatedAt: new Date() };
   if (d.title !== undefined) patch.title = d.title;
   if (d.description !== undefined) patch.description = d.description;
-  // Контрагент: id из справочника (проставляем и денормализованное имя), либо свободный ввод.
-  if (d.counterpartyId !== undefined) {
-    if (d.counterpartyId) {
-      const found = await resolveCounterparty(w.id, d.counterpartyId);
-      if (!found) return c.json({ error: 'bad_counterparty' }, 400);
-      patch.counterpartyId = found.id; patch.counterpartyName = found.name;
-    } else {
-      patch.counterpartyId = null;   // отвязали от справочника (имя оставит следующая строка, если пришло)
+  if (isDraft) {
+    // Контрагент: id из справочника (проставляем и денормализованное имя), либо свободный ввод.
+    if (d.counterpartyId !== undefined) {
+      if (d.counterpartyId) {
+        const found = await resolveCounterparty(w.id, d.counterpartyId);
+        if (!found) return c.json({ error: 'bad_counterparty' }, 400);
+        patch.counterpartyId = found.id; patch.counterpartyName = found.name;
+      } else {
+        patch.counterpartyId = null;   // отвязали от справочника (имя оставит следующая строка, если пришло)
+      }
     }
-  }
-  if (d.counterpartyName !== undefined) patch.counterpartyName = d.counterpartyName;
-  if (d.priority !== undefined) patch.priority = d.priority;
-  if (d.priorityReason !== undefined) patch.priorityReason = d.priorityReason;
-  if (d.dueAt !== undefined) patch.dueAt = d.dueAt ? new Date(d.dueAt) : null;
-  if (d.amount !== undefined) patch.amount = d.amount != null ? String(d.amount) : null;
-  if (d.currency !== undefined) patch.currency = d.currency;
+    if (d.counterpartyName !== undefined) patch.counterpartyName = d.counterpartyName;
+    if (d.priority !== undefined) patch.priority = d.priority;
+    if (d.priorityReason !== undefined) patch.priorityReason = d.priorityReason;
+    if (d.dueAt !== undefined) patch.dueAt = d.dueAt ? new Date(d.dueAt) : null;
+    if (d.amount !== undefined) patch.amount = d.amount != null ? String(d.amount) : null;
+    if (d.currency !== undefined) patch.currency = d.currency;
 
-  const finalPriority = (patch.priority as string) ?? row.priority;
-  const finalReason = (patch.priorityReason as string | null) ?? row.priorityReason;
-  if (finalPriority === 'critical' && !finalReason?.trim()) return c.json({ error: 'priority_reason_required' }, 400);
+    const finalPriority = (patch.priority as string) ?? row.priority;
+    const finalReason = (patch.priorityReason as string | null) ?? row.priorityReason;
+    if (finalPriority === 'critical' && !finalReason?.trim()) return c.json({ error: 'priority_reason_required' }, 400);
+  }
 
   await db.transaction(async (tx) => {
     await tx.update(doc).set(patch).where(eq(doc.id, id));
@@ -526,8 +537,9 @@ documentRoutes.get('/:id/versions/:versionId/file', async (c) => {
   const id = c.req.param('id')!;
   if (!(await canView(u, c.get('docPerms').canViewAll, id))) return c.json({ error: 'forbidden' }, 403);
 
-  const [v] = await db.select({ key: ver.objectKey, fileName: ver.fileName, mime: ver.mimeType })
-    .from(ver).where(and(eq(ver.id, c.req.param('versionId')!), eq(ver.documentId, id))).limit(1);
+  const [v] = await db.select({ key: ver.objectKey, fileName: ver.fileName, mime: ver.mimeType, title: doc.title })
+    .from(ver).innerJoin(doc, eq(doc.id, ver.documentId))
+    .where(and(eq(ver.id, c.req.param('versionId')!), eq(ver.documentId, id))).limit(1);
   if (!v) return c.json({ error: 'not_found' }, 404);
 
   let node: Readable;
@@ -536,8 +548,10 @@ documentRoutes.get('/:id/versions/:versionId/file', async (c) => {
   } catch {
     return c.json({ error: 'unavailable' }, 502);
   }
+  // Имя файла при скачивании = название карточки + оригинальное расширение.
+  const downloadName = `${v.title}${extname(v.fileName)}`;
   c.header('Content-Type', v.mime);
-  c.header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(v.fileName)}`);
+  c.header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`);
   return c.body(Readable.toWeb(node) as ReadableStream);
 });
 
@@ -564,6 +578,7 @@ documentRoutes.get('/:id/route-preview', async (c) => {
 // берём переданный вручную список людей (ad-hoc).
 const submitSchema = z.object({
   approvers: z.array(z.string().uuid()).max(20).optional(),   // нужны только при РУЧНОМ маршруте (нет матрицы)
+  dueAt: z.string().datetime({ offset: true }).nullable().optional(),   // крайний срок согласования
 });
 
 documentRoutes.post('/:id/submit', async (c) => {
@@ -622,7 +637,10 @@ documentRoutes.post('/:id/submit', async (c) => {
 
   const result = await db.transaction(async (tx) => {
     const number = row.registryNumber ?? await nextRegistryNumber(tx, w.id, type, group?.code ?? '');
-    await tx.update(doc).set({ registryNumber: number, status: 'on_approval', updatedAt: new Date() }).where(eq(doc.id, id));
+    // Крайний срок согласования (если указали при отправке) кладём в dueAt карточки —
+    // его же читают срез «Просрочено» и очередь согласующего.
+    const dueSet = p.data.dueAt !== undefined ? { dueAt: p.data.dueAt ? new Date(p.data.dueAt) : null } : {};
+    await tx.update(doc).set({ registryNumber: number, status: 'on_approval', updatedAt: new Date(), ...dueSet }).where(eq(doc.id, id));
     await logDoc(tx, {
       workspaceId: w.id, documentId: id, entity: 'document', entityId: id, actorId: u.sub,
       action: 'status_changed', payload: { from: row.status, to: 'on_approval', registryNumber: number },
@@ -802,7 +820,9 @@ documentRoutes.get('/:id/editor-config', async (c) => {
     document: {
       fileType: dt.fileType,
       key,
-      title: `${row.registryNumber ? row.registryNumber + ' ' : ''}${v.fileName}`,
+      // Имя документа = название карточки (что владелец написал) + расширение файла.
+      // Оно же станет именем при «Скачать как» из редактора.
+      title: `${row.title}.${dt.fileType}`,
       url: `${env.BACKEND_INTERNAL_URL}/api/ds/file/${fileToken}`,
       // «Сведения о документе» (Файл → Сведения): без info панель пустая, только статистика.
       info: {

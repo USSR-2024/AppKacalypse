@@ -225,6 +225,7 @@ export interface DocCard extends DocRow {
   canSubmit: boolean;
   canManage: boolean;
   canDelete: boolean;
+  canRename: boolean;
 }
 
 export interface DocType {
