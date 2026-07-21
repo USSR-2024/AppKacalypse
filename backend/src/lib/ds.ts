@@ -71,7 +71,9 @@ export function resolveAccess(a: {
     return { mode: 'edit', edit: true, review: false, comment: true, trackChanges: false };
   }
   if (a.status === 'on_approval' && a.activeApprover) {
-    return { mode: 'edit', edit: true, review: true, comment: true, trackChanges: true };
+    // ★ edit=false + review=true = ТОЛЬКО рецензирование: согласующий не может выключить
+    // track changes и внести правку «мимо» истории. edit=true раньше это позволял (дырка).
+    return { mode: 'edit', edit: false, review: true, comment: true, trackChanges: true };
   }
   if (a.activeApprover || a.pastApprover) {
     return { mode: 'view', edit: false, review: false, comment: true, trackChanges: false };

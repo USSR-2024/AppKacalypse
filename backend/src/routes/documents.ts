@@ -771,7 +771,7 @@ documentRoutes.get('/:id/editor-config', async (c) => {
 
   const [row] = await db.select({
     id: doc.id, title: doc.title, status: doc.status, authorId: doc.authorId, ownerId: doc.ownerId,
-    currentVersionId: doc.currentVersionId, registryNumber: doc.registryNumber,
+    currentVersionId: doc.currentVersionId, registryNumber: doc.registryNumber, createdAt: doc.createdAt,
   }).from(doc).where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
   if (!row) return c.json({ error: 'not_found' }, 404);
   if (!row.currentVersionId) return c.json({ error: 'no_version' }, 409);   // редактировать нечего
@@ -792,6 +792,7 @@ documentRoutes.get('/:id/editor-config', async (c) => {
     pastApprover: rel.past,
   });
   const userName = await actorDisplayName(u.sub);
+  const authorName = await actorDisplayName(row.authorId);   // для «Сведений о документе» (owner)
   const key = v.dsKey || `d${id.replace(/-/g, '').slice(0, 12)}_v${v.versionNo}_${v.fileHash.slice(0, 16)}`;
   const fileToken = await signFileToken(id, v.id);
   const cbToken = await signCallbackToken(id);
@@ -803,6 +804,11 @@ documentRoutes.get('/:id/editor-config', async (c) => {
       key,
       title: `${row.registryNumber ? row.registryNumber + ' ' : ''}${v.fileName}`,
       url: `${env.BACKEND_INTERNAL_URL}/api/ds/file/${fileToken}`,
+      // «Сведения о документе» (Файл → Сведения): без info панель пустая, только статистика.
+      info: {
+        owner: authorName,
+        uploaded: row.createdAt.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' }),
+      },
       permissions: {
         edit: access.edit,
         review: access.review,
@@ -822,6 +828,10 @@ documentRoutes.get('/:id/editor-config', async (c) => {
         autosave: true,
         comments: true,
         review: { trackChanges: access.trackChanges, reviewDisplay: 'markup', hoverMode: false },
+        // Брендинг: убираем что позволяет Community-редакция. Логотип ONLYOFFICE в шапке
+        // в бесплатной версии не убирается (лицензия) — это не наш конфиг.
+        feedback: false,          // кнопка «Обратная связь и поддержка»
+        customer: { name: 'appka.space' },
       },
     },
   };
