@@ -149,10 +149,12 @@ export async function approveStep(
     return { finished: false, nextAssignees: await assigneesOfStage(tx, a.routeId, ns) };
   }
 
-  // Стадий больше нет — маршрут согласован.
+  // Стадий больше нет — согласование пройдено. Документ уходит НА УТВЕРЖДЕНИЕ (ГД),
+  // а не сразу в финал: утверждающий (по умолчанию глава) утвердит отдельно (см.
+  // /approve-final). Маршрут согласования закрыт (approved), документ → on_signing.
   await tx.update(ri).set({ status: 'approved', finishedAt: new Date() }).where(eq(ri.id, a.routeId));
-  await tx.update(schema.documents).set({ status: 'approved', updatedAt: new Date() }).where(eq(schema.documents.id, a.documentId));
-  await logDoc(tx, { workspaceId: a.workspaceId, documentId: a.documentId, entity: 'route_step', entityId: a.stepId, actorId: a.actorId, action: 'approved', payload: { stageNo: a.stageNo, finished: true } });
+  await tx.update(schema.documents).set({ status: 'on_signing', updatedAt: new Date() }).where(eq(schema.documents.id, a.documentId));
+  await logDoc(tx, { workspaceId: a.workspaceId, documentId: a.documentId, entity: 'route_step', entityId: a.stepId, actorId: a.actorId, action: 'approved', payload: { stageNo: a.stageNo, finished: true, toApproval: true } });
   return { finished: true, nextAssignees: [] };
 }
 

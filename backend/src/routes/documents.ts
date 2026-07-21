@@ -10,7 +10,7 @@ import { nextRegistryNumber, visibilityCond, canView, getDocPerms, isFeatureEnab
 import { putVersion, getVersionStream } from '../lib/dms-storage.js';
 import { BLANK_DOCX_B64 } from '../lib/blank-docx.js';
 import { startRoute, activeStepForUser, approveStep, rejectStep, assembleMatrix, type RouteStepInput } from '../lib/route-engine.js';
-import { openTrackingTask, openStepTasks, closeStepTask, cancelOpenStepTasks, closeTrackingTask, purgeDocTasks, type DocMeta } from '../lib/doc-tasks.js';
+import { openTrackingTask, openStepTasks, closeStepTask, cancelOpenStepTasks, closeTrackingTask, purgeDocTasks, openApprovalTasks, completeAllDocTasks, cancelApprovalTasks, type DocMeta } from '../lib/doc-tasks.js';
 import { notifyApprovalStep, notifyApprovalDecision } from '../lib/notify.js';
 import { env } from '../lib/env.js';
 import {
@@ -280,7 +280,9 @@ documentRoutes.get('/:id', async (c) => {
   const canDelete = perms.canManage || (mine && ['draft', 'rework', 'cancelled'].includes(row.status));
   // Править сведения (название/описание — на любом статусе; остальное — только в черновике).
   const canRename = mine;
-  return c.json({ ...row, versions, canEdit, canSubmit, canManage: perms.canManage, canDelete, canRename });
+  // Утвердить (этап после согласования): документ на утверждении и я — утверждающий (глава).
+  const canApproveFinal = row.status === 'on_signing' && perms.canManage;
+  return c.json({ ...row, versions, canEdit, canSubmit, canManage: perms.canManage, canDelete, canRename, canApproveFinal });
 });
 
 // ── Создание ─────────────────────────────────────────────────────────────────
@@ -702,7 +704,10 @@ documentRoutes.get('/:id/route', async (c) => {
   // (в параллельной стадии активных несколько — важен свой).
   const myActive = steps.find((s) => s.status === 'active' && s.assigneeId === u.sub);
   const canDecide = !!myActive;
-  return c.json({ route, steps, remarks, canDecide, activeStepId: myActive?.id ?? null });
+  // Я на ПОСЛЕДНЕЙ стадии → моё согласование отправит документ на утверждение (кнопка иная).
+  const maxStage = steps.length ? Math.max(...steps.map((s) => s.stageNo)) : 0;
+  const finalStage = !!myActive && myActive.stageNo === maxStage;
+  return c.json({ route, steps, remarks, canDecide, finalStage, activeStepId: myActive?.id ?? null });
 });
 
 // Решение по активному шагу: согласовать (можно с комментарием) или вернуть (замечание).
@@ -738,11 +743,19 @@ documentRoutes.post('/:id/decision', async (c) => {
         workspaceId: w.id, documentId: id, routeId: step.routeId, stepId: step.stepId, stageNo: step.stageNo,
         currentVersionId: row.currentVersionId, actorId: u.sub, comment: p.data.comment ?? null,
       });
-      // Мост: моя задача-шаг закрыта; маршрут пройден → закрыть трекинг; иначе открыть задачи новой стадии.
+      // Мост: моя задача-шаг закрыта. Согласование пройдено → документ на утверждении:
+      // создаём задачи «Утвердить» главам (трекинг инициатора НЕ закрываем — ещё не финал).
+      // Иначе (стадия сдвинулась) — открыть задачи новой стадии.
       await closeStepTask(tx, step.stepId);
-      if (finished) await closeTrackingTask(tx, id);
-      else if (nextAssignees.length) await openStepTasks(tx, meta);
-      return { outcome: finished ? 'finished' as const : 'approved' as const, nextAssignees };
+      let approverIds: string[] = [];
+      if (finished) {
+        const admins = await tx.select({ id: schema.workspaceMembers.userId })
+          .from(schema.workspaceMembers)
+          .where(and(eq(schema.workspaceMembers.workspaceId, w.id), eq(schema.workspaceMembers.status, 'active'), inArray(schema.workspaceMembers.role, ['owner', 'admin'])));
+        approverIds = admins.map((a) => a.id);
+        await openApprovalTasks(tx, meta, approverIds);
+      } else if (nextAssignees.length) await openStepTasks(tx, meta);
+      return { outcome: finished ? 'finished' as const : 'approved' as const, nextAssignees, approverIds };
     }
     await rejectStep(tx, {
       workspaceId: w.id, documentId: id, routeId: step.routeId, stepId: step.stepId, stageNo: step.stageNo,
@@ -751,14 +764,53 @@ documentRoutes.post('/:id/decision', async (c) => {
     // Мост: моя задача-шаг закрыта (я вернул), остальные задачи-шаги этого круга снимаем; трекинг остаётся.
     await closeStepTask(tx, step.stepId);
     await cancelOpenStepTasks(tx, step.routeId);
-    return { outcome: 'rework' as const, nextAssignees: [] as string[] };
+    return { outcome: 'rework' as const, nextAssignees: [] as string[], approverIds: [] as string[] };
   });
 
-  // Уведомления вне транзакции. Согласование сдвинуло стадию → зовём следующих; инициатору — об исходе.
+  // Уведомления вне транзакции. Согласование сдвинуло стадию → зовём следующих;
+  // согласование ПРОЙДЕНО → зовём утверждающих (глав); инициатору — об исходе.
   const actorName = await actorDisplayName(u.sub);
   for (const aid of [...new Set(res.nextAssignees)]) notifyApprovalStep(id, row.title, aid, actorName, u.sub).catch(() => {});
+  for (const aid of [...new Set(res.approverIds)]) notifyApprovalStep(id, row.title, aid, actorName, u.sub).catch(() => {});
   notifyApprovalDecision(id, row.title, row.authorId, actorName, res.outcome, u.sub).catch(() => {});
   return c.json({ ok: true, outcome: res.outcome });
+});
+
+// ── Утверждение (этап после согласования) ────────────────────────────────────
+// Когда все согласовали, документ на статусе on_signing. Утверждающий (сейчас — глава
+// пространства; позже можно назначать по уровню документа) утверждает или возвращает.
+documentRoutes.post('/:id/approve-final', async (c) => {
+  const w = c.get('workspace');
+  const u = c.get('user');
+  const id = c.req.param('id')!;
+  const p = decisionSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!p.success) return c.json({ error: 'bad_request' }, 400);
+
+  const [row] = await db.select({ id: doc.id, title: doc.title, status: doc.status, authorId: doc.authorId })
+    .from(doc).where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  if (row.status !== 'on_signing') return c.json({ error: 'not_on_signing' }, 409);
+  // Утверждает глава (canManage). Позже — конкретное назначенное лицо по уровню документа.
+  if (!c.get('docPerms').canManage) return c.json({ error: 'not_approver' }, 403);
+  if (p.data.decision === 'reject' && !p.data.comment?.trim()) return c.json({ error: 'remark_required' }, 400);
+
+  const approve = p.data.decision === 'approve';
+  await db.transaction(async (tx) => {
+    await tx.update(doc).set({ status: approve ? 'approved' : 'rework', updatedAt: new Date() }).where(eq(doc.id, id));
+    if (approve) {
+      await completeAllDocTasks(tx, id);          // утверждение + трекинг → done
+    } else {
+      await cancelApprovalTasks(tx, id);          // утверждение отменяем, трекинг остаётся
+    }
+    await logDoc(tx, {
+      workspaceId: w.id, documentId: id, entity: 'document', entityId: id, actorId: u.sub,
+      action: approve ? 'final_approved' : 'final_rejected', payload: { comment: p.data.comment?.trim() || undefined },
+    });
+  });
+
+  const actorName = await actorDisplayName(u.sub);
+  notifyApprovalDecision(id, row.title, row.authorId, actorName, approve ? 'finished' : 'rework', u.sub).catch(() => {});
+  return c.json({ ok: true, status: approve ? 'approved' : 'rework' });
 });
 
 // ── ONLYOFFICE: конфиг редактора, forcesave, история ─────────────────────────

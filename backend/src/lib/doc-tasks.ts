@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 
 // Мост «Документы → Задачи» (M2). Согласование не должно жить только в модуле на
@@ -132,6 +132,38 @@ export async function cancelOpenStepTasks(tx: Db, routeId: string): Promise<void
 export async function closeTrackingTask(tx: Db, documentId: string): Promise<void> {
   const [d] = await tx.select({ taskId: DOC.approvalTaskId }).from(DOC).where(eq(DOC.id, documentId)).limit(1);
   if (d?.taskId) await complete(tx, d.taskId);
+}
+
+/** Согласование пройдено → задачи «Утвердить» утверждающим (по умолчанию — глава). */
+export async function openApprovalTasks(tx: Db, m: DocMeta, approverIds: string[]): Promise<void> {
+  const num = m.registryNumber ? `${m.registryNumber} · ` : '';
+  for (const aid of [...new Set(approverIds)]) {
+    await createBridge(tx, {
+      workspaceId: m.workspaceId,
+      documentId: m.documentId,
+      title: `Утвердить: ${m.docTitle}`,
+      description: `${num}Документ согласован всеми и ждёт вашего утверждения.`,
+      assigneeId: aid,
+      controllerId: m.authorId,
+      creatorId: m.authorId,
+      dueAt: m.dueAt,
+    });
+  }
+}
+
+/** ГД утвердил → закрыть ВСЕ открытые задачи-мосты документа (утверждение + трекинг). */
+export async function completeAllDocTasks(tx: Db, documentId: string): Promise<void> {
+  await tx.update(T)
+    .set({ status: 'done', completedAt: new Date(), isTriaged: true, updatedAt: new Date() })
+    .where(and(eq(T.documentId, documentId), inArray(T.status, [...OPEN])));
+}
+
+/** ГД вернул → отменить задачи утверждения, но трекинг инициатора оставить (он правит). */
+export async function cancelApprovalTasks(tx: Db, documentId: string): Promise<void> {
+  const [d] = await tx.select({ taskId: DOC.approvalTaskId }).from(DOC).where(eq(DOC.id, documentId)).limit(1);
+  const conds = [eq(T.documentId, documentId), inArray(T.status, [...OPEN])];
+  if (d?.taskId) conds.push(ne(T.id, d.taskId));   // трекинг инициатора не трогаем
+  await tx.update(T).set({ status: 'cancelled', isTriaged: true, updatedAt: new Date() }).where(and(...conds));
 }
 
 /** Удаление карточки → удалить ВСЕ задачи-мосты документа целиком (иначе повиснут во

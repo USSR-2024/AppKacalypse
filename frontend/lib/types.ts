@@ -226,6 +226,7 @@ export interface DocCard extends DocRow {
   canManage: boolean;
   canDelete: boolean;
   canRename: boolean;
+  canApproveFinal: boolean;   // документ на утверждении и я — утверждающий (глава)
 }
 
 export interface DocType {
@@ -279,6 +280,7 @@ export interface DocRoute {
   steps: DocRouteStep[];
   remarks: DocRemark[];
   canDecide?: boolean;
+  finalStage?: boolean;   // мой активный шаг — на последней стадии (согласую → уйдёт на утверждение)
   activeStepId?: string | null;
 }
 

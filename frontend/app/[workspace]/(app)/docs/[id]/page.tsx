@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/store";
 import { useWs, wsHref } from "@/lib/ws";
 import { Sheet } from "@/components/Sheet";
 import { ConfirmSheet } from "@/components/ConfirmSheet";
-import { DOC_PRIORITY, StatusChip, STEP_STATUS, STEP_DOT, fileSize, isOfficeDoc } from "@/lib/docStrings";
+import { DOC_PRIORITY, StatusChip, STEP_STATUS, fileSize, isOfficeDoc } from "@/lib/docStrings";
 import type { DocCard, DocActivity, DocRoute, DocMember, DocRoutePreview, DocCounterparty, DocPriority } from "@/lib/types";
 
 // Человеческие подписи событий журнала: в БД лежат коды (created, version_saved…).
@@ -37,6 +37,7 @@ export default function DocCardPage() {
   const [confirmDel, setConfirmDel] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [decision, setDecision] = useState<"approve" | "reject" | null>(null);
+  const [finalDecision, setFinalDecision] = useState<"approve" | "reject" | null>(null);
 
   if (!d) return <main className="px-4 pt-12"><p className="text-sm text-muted">Загрузка…</p></main>;
 
@@ -143,13 +144,15 @@ export default function DocCardPage() {
       {/* ── Решение по согласованию: показываем, только если очередь дошла до меня ── */}
       {route?.canDecide && (
         <section className="mb-6 rounded-2xl border border-accent/40 bg-accent/5 px-4 py-4">
-          <p className="mb-3 text-sm font-medium">Документ ждёт вашего решения</p>
+          <p className="mb-3 text-sm font-medium">
+            {route.finalStage ? "Вы — последний согласующий. Согласуете — документ уйдёт на утверждение." : "Документ ждёт вашего решения"}
+          </p>
           <div className="flex flex-col gap-2 sm:flex-row">
             <button
               onClick={() => setDecision("approve")}
               className="flex-1 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700"
             >
-              ✓ Согласовать
+              {route.finalStage ? "✓ Согласовать и отправить на утверждение" : "✓ Согласовать"}
             </button>
             <button
               onClick={() => setDecision("reject")}
@@ -161,43 +164,52 @@ export default function DocCardPage() {
         </section>
       )}
 
-      {/* ── Маршрут согласования: цепочка людей и их решения ── */}
+      {/* ── Утверждение: документ согласован всеми, ждёт утверждения главы ── */}
+      {d.canApproveFinal && (
+        <section className="mb-6 rounded-2xl border border-gold/50 bg-gold-soft/60 px-4 py-4">
+          <p className="mb-3 text-sm font-medium">Документ согласован всеми и ждёт вашего утверждения</p>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              onClick={() => setFinalDecision("approve")}
+              className="flex-1 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700"
+            >
+              ✓ Утвердить
+            </button>
+            <button
+              onClick={() => setFinalDecision("reject")}
+              className="flex-1 rounded-xl bg-danger/90 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-danger"
+            >
+              ↩ Вернуть на доработку
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* ── Дорожная карта согласования: кто, статус, на ком сейчас, + утверждение ГД ── */}
       {route?.route && (
         <section className="mb-6">
           <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Маршрут согласования</h2>
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Дорожная карта</h2>
             {route.route.iteration > 1 && <span className="text-xs text-muted">круг {route.route.iteration}</span>}
           </div>
-          <div className="flex flex-col gap-3 rounded-2xl bg-surface px-4 py-4">
-            {route.steps.map((s) => {
-              const rem = remarksByStep(s.id);
-              return (
-                <div key={s.id} className="flex gap-3">
-                  <div className="mt-1 flex flex-col items-center">
-                    <span className={`h-2.5 w-2.5 rounded-full ${STEP_DOT[s.status]}`} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-sm">{s.assigneeName ?? "—"}</span>
-                      <span className={`shrink-0 text-xs ${s.status === "rejected" ? "text-danger" : s.status === "approved" ? "text-emerald-500" : s.status === "active" ? "text-accent" : "text-muted"}`}>
-                        {STEP_STATUS[s.status]}
-                      </span>
-                    </div>
-                    {s.decidedAt && (
-                      <div className="mt-0.5 text-xs text-muted">{new Date(s.decidedAt).toLocaleString("ru-RU")}</div>
-                    )}
-                    {rem.map((r) => (
-                      <div
-                        key={r.id}
-                        className={`mt-1.5 rounded-lg px-2.5 py-1.5 text-xs ${r.kind === "blocking" ? "bg-danger/10 text-danger" : "bg-surface-2 text-muted"}`}
-                      >
-                        <span className="font-medium">{r.kind === "blocking" ? "Замечание" : "Комментарий"}:</span> {r.text}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
+          <div className="rounded-2xl bg-surface px-4 py-4">
+            {route.steps.map((s) => (
+              <RoadmapNode
+                key={s.id}
+                name={s.assigneeName ?? "—"}
+                statusLabel={STEP_STATUS[s.status]}
+                circle={s.status === "approved" ? "done" : s.status === "rejected" ? "rejected" : s.status === "active" ? "active" : "pending"}
+                decidedAt={s.decidedAt}
+                remarks={remarksByStep(s.id)}
+              />
+            ))}
+            {/* Узел утверждения ГД — состояние по статусу документа */}
+            <RoadmapNode
+              name="Утверждение (ГД)"
+              statusLabel={d.status === "on_signing" ? "на утверждении" : d.status === "approved" ? "утверждено" : "ожидает"}
+              circle={d.status === "on_signing" ? "active" : d.status === "approved" ? "done" : "pending"}
+              last
+            />
           </div>
         </section>
       )}
@@ -349,12 +361,62 @@ export default function DocCardPage() {
           onDone={() => { setDecision(null); refresh(); }}
         />
       )}
+
+      {finalDecision && (
+        <DecisionSheet
+          docId={id}
+          mode={finalDecision}
+          final
+          onClose={() => setFinalDecision(null)}
+          onDone={() => { setFinalDecision(null); refresh(); }}
+        />
+      )}
     </main>
   );
 }
 
 // Отправка на согласование. Если у типа есть матрица — маршрут собран заранее,
 // показываем предпросмотр (только чтение). Иначе — ручной выбор людей по порядку.
+// Узел дорожной карты согласования: кружок статуса + имя + линия к следующему.
+function RoadmapNode({ name, statusLabel, circle, decidedAt, remarks, last }: {
+  name: string;
+  statusLabel: string;
+  circle: "done" | "active" | "rejected" | "pending";
+  decidedAt?: string | null;
+  remarks?: { id: string; kind: string; text: string }[];
+  last?: boolean;
+}) {
+  const circleCls =
+    circle === "done" ? "bg-emerald-500 text-white" :
+    circle === "rejected" ? "bg-danger text-white" :
+    circle === "active" ? "border-2 border-accent bg-surface text-accent" :
+    "border border-border bg-surface-2 text-muted";
+  const statusCls =
+    circle === "rejected" ? "text-danger" : circle === "done" ? "text-emerald-500" : circle === "active" ? "text-accent" : "text-muted";
+  return (
+    <div className="flex gap-3">
+      <div className="flex flex-col items-center">
+        <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${circleCls}`}>
+          {circle === "done" ? "✓" : circle === "rejected" ? "✕" : ""}
+        </span>
+        {!last && <span className="my-1 w-px flex-1 bg-border" />}
+      </div>
+      <div className={`min-w-0 flex-1 ${last ? "" : "pb-4"}`}>
+        <div className="flex items-center justify-between gap-2">
+          <span className={`truncate text-sm ${circle === "active" ? "font-medium text-text" : ""}`}>{name}</span>
+          <span className={`shrink-0 text-xs ${statusCls}`}>{statusLabel}</span>
+        </div>
+        {decidedAt && <div className="mt-0.5 text-xs text-muted">{new Date(decidedAt).toLocaleString("ru-RU")}</div>}
+        {remarks?.map((r) => (
+          <div key={r.id} className={`mt-1.5 rounded-lg px-2.5 py-1.5 text-xs ${r.kind === "blocking" ? "bg-danger/10 text-danger" : "bg-surface-2 text-muted"}`}>
+            <span className="font-medium">{r.kind === "blocking" ? "Замечание" : "Комментарий"}:</span> {r.text}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Правка сведений карточки. Название/описание — на любом статусе; контрагент/приоритет —
 // только в черновике (после отправки поля зафиксированы вместе с содержанием).
 function EditCardSheet({ doc, onClose, onDone }: { doc: DocCard; onClose: () => void; onDone: () => void }) {
@@ -585,7 +647,7 @@ function SubmitSheet({ docId, rework, onClose, onDone }: { docId: string; rework
 
 // Решение согласующего. Возврат требует замечания (оно блокирует), согласование
 // разрешает необязательный комментарий (уйдёт в лист разногласий).
-function DecisionSheet({ docId, mode, onClose, onDone }: { docId: string; mode: "approve" | "reject"; onClose: () => void; onDone: () => void }) {
+function DecisionSheet({ docId, mode, final, onClose, onDone }: { docId: string; mode: "approve" | "reject"; final?: boolean; onClose: () => void; onDone: () => void }) {
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -596,7 +658,7 @@ function DecisionSheet({ docId, mode, onClose, onDone }: { docId: string; mode: 
     if (reject && !comment.trim()) return setErr("Опишите, что нужно исправить");
     setBusy(true);
     try {
-      await api(`/documents/${docId}/decision`, {
+      await api(`/documents/${docId}/${final ? "approve-final" : "decision"}`, {
         method: "POST",
         body: JSON.stringify({ decision: mode, comment: comment.trim() || undefined }),
       });
@@ -605,6 +667,8 @@ function DecisionSheet({ docId, mode, onClose, onDone }: { docId: string; mode: 
       const code = e instanceof Error ? e.message : "";
       setErr(
         code === "not_your_step" ? "Сейчас очередь не за вами" :
+        code === "not_on_signing" ? "Документ уже не на утверждении" :
+        code === "not_approver" ? "Утверждать может только глава пространства" :
         code === "remark_required" ? "Опишите, что нужно исправить" :
         "Не удалось сохранить решение",
       );
@@ -614,11 +678,15 @@ function DecisionSheet({ docId, mode, onClose, onDone }: { docId: string; mode: 
 
   return (
     <Sheet onClose={onClose} size="md">
-      <h2 className="mb-1 text-lg font-semibold">{reject ? "Вернуть на корректировку" : "Согласовать документ"}</h2>
+      <h2 className="mb-1 text-lg font-semibold">
+        {reject ? (final ? "Вернуть на доработку" : "Вернуть на корректировку") : (final ? "Утвердить документ" : "Согласовать документ")}
+      </h2>
       <p className="mb-4 text-sm text-muted">
         {reject
-          ? "Замечание блокирует согласование — документ вернётся инициатору, круг начнётся заново после правки."
-          : "Можно приложить комментарий — он не блокирует согласование и попадёт в лист разногласий."}
+          ? "Замечание блокирует — документ вернётся инициатору, согласование пройдёт заново после правки."
+          : final
+            ? "Все согласовали. После утверждения документ будет готов (далее — подписание оригинала)."
+            : "Можно приложить комментарий — он не блокирует согласование и попадёт в лист разногласий."}
       </p>
 
       <label className="text-xs text-muted">{reject ? "Замечание" : "Комментарий (необязательно)"}</label>
@@ -640,7 +708,7 @@ function DecisionSheet({ docId, mode, onClose, onDone }: { docId: string; mode: 
           disabled={busy}
           className={`flex-1 rounded-xl px-4 py-3 text-sm font-medium text-white disabled:opacity-40 ${reject ? "bg-danger" : "bg-emerald-600"}`}
         >
-          {busy ? "Сохраняем…" : reject ? "Вернуть" : "Согласовать"}
+          {busy ? "Сохраняем…" : reject ? "Вернуть" : final ? "Утвердить" : "Согласовать"}
         </button>
       </div>
     </Sheet>
