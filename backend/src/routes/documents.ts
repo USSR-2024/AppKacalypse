@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { Readable } from 'node:stream';
 import { extname } from 'node:path';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, lt, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, schema } from '../db/index.js';
 import { requireAuth } from '../lib/auth-middleware.js';
@@ -77,6 +77,10 @@ documentRoutes.get('/', async (c) => {
   if (groupId) conds.push(eq(doc.groupId, groupId));
   const typeId = c.req.query('typeId');
   if (typeId) conds.push(eq(doc.typeId, typeId));
+
+  // Личные срезы: «мои» (я автор или ответственный) и «просрочено» (срок в прошлом).
+  if (c.req.query('mine') === '1') conds.push(or(eq(doc.authorId, u.sub), eq(doc.ownerId, u.sub))!);
+  if (c.req.query('overdue') === '1') conds.push(and(isNotNull(doc.dueAt), lt(doc.dueAt, new Date()))!);
 
   const rows = await db
     .select({

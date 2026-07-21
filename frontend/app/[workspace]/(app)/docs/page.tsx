@@ -15,7 +15,11 @@ export default function DocsPage() {
   const router = useRouter();
   const [sheet, setSheet] = useState(false);
   const [filter, setFilter] = useState<string>("");
-  const { data, mutate, error } = useSWR<DocRow[]>(`/documents${filter ? `?status=${filter}` : "?bucket=active"}`, fetcher);
+  const [scope, setScope] = useState<"" | "mine" | "overdue">("");
+  const query = new URLSearchParams();
+  if (filter) query.set("status", filter); else query.set("bucket", "active");
+  if (scope) query.set(scope, "1");
+  const { data, mutate, error } = useSWR<DocRow[]>(`/documents?${query.toString()}`, fetcher);
   const { data: inbox } = useSWR<DocInboxItem[]>("/documents/inbox", fetcher);
   const disabled = error instanceof Error && error.message === "module_disabled";
 
@@ -73,6 +77,24 @@ export default function DocsPage() {
             </span>
           </button>
         )}
+      </div>
+
+      <div className="mb-2 flex gap-1 overflow-x-auto pb-1">
+        {([
+          { v: "", label: "Все" },
+          { v: "mine", label: "Мои" },
+          { v: "overdue", label: "Просрочено" },
+        ] as const).map((s) => (
+          <button
+            key={s.v}
+            onClick={() => setScope(s.v)}
+            className={`shrink-0 rounded-full px-3 py-1 text-xs transition ${
+              scope === s.v ? "bg-accent text-white" : "bg-surface text-muted hover:text-text"
+            }`}
+          >
+            {s.label}
+          </button>
+        ))}
       </div>
 
       <div className="mb-4 flex gap-1 overflow-x-auto pb-1">
