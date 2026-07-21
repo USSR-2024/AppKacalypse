@@ -141,6 +141,10 @@ export default function DocCardPage() {
 
       {err && <p className="mb-3 rounded-xl bg-danger/10 px-3 py-2 text-sm text-danger">{err}</p>}
 
+      {/* Две колонки на десктопе: основное слева, дорожная карта — доп-панель справа. */}
+      <div className="lg:flex lg:items-start lg:gap-6">
+      <div className="lg:min-w-0 lg:flex-1">
+
       {/* ── Решение по согласованию: показываем, только если очередь дошла до меня ── */}
       {route?.canDecide && (
         <section className="mb-6 rounded-2xl border border-accent/40 bg-accent/5 px-4 py-4">
@@ -181,35 +185,6 @@ export default function DocCardPage() {
             >
               ↩ Вернуть на доработку
             </button>
-          </div>
-        </section>
-      )}
-
-      {/* ── Дорожная карта согласования: кто, статус, на ком сейчас, + утверждение ГД ── */}
-      {route?.route && (
-        <section className="mb-6">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Дорожная карта</h2>
-            {route.route.iteration > 1 && <span className="text-xs text-muted">круг {route.route.iteration}</span>}
-          </div>
-          <div className="rounded-2xl bg-surface px-4 py-4">
-            {route.steps.map((s) => (
-              <RoadmapNode
-                key={s.id}
-                name={s.assigneeName ?? "—"}
-                statusLabel={STEP_STATUS[s.status]}
-                circle={s.status === "approved" ? "done" : s.status === "rejected" ? "rejected" : s.status === "active" ? "active" : "pending"}
-                decidedAt={s.decidedAt}
-                remarks={remarksByStep(s.id)}
-              />
-            ))}
-            {/* Узел утверждения ГД — состояние по статусу документа */}
-            <RoadmapNode
-              name="Утверждение (ГД)"
-              statusLabel={d.status === "on_signing" ? "на утверждении" : d.status === "approved" ? "утверждено" : "ожидает"}
-              circle={d.status === "on_signing" ? "active" : d.status === "approved" ? "done" : "pending"}
-              last
-            />
           </div>
         </section>
       )}
@@ -324,6 +299,38 @@ export default function DocCardPage() {
           </p>
         </div>
       )}
+
+      </div>{/* /основная колонка */}
+
+      {/* ── Дорожная карта — доп-панель (справа на десктопе, снизу на мобиле) ── */}
+      {route?.route && (
+        <aside className="mt-6 lg:mt-0 lg:sticky lg:top-4 lg:w-72 lg:shrink-0">
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">Дорожная карта</h2>
+            {route.route.iteration > 1 && <span className="text-xs text-muted">круг {route.route.iteration}</span>}
+          </div>
+          <div className="rounded-2xl bg-surface px-4 py-4">
+            {route.steps.map((s) => (
+              <RoadmapNode
+                key={s.id}
+                name={s.assigneeName ?? "—"}
+                statusLabel={STEP_STATUS[s.status]}
+                circle={s.status === "approved" ? "done" : s.status === "rejected" ? "rejected" : s.status === "active" ? "active" : "pending"}
+                decidedAt={s.decidedAt}
+                remarks={remarksByStep(s.id)}
+              />
+            ))}
+            <RoadmapNode
+              name="Утверждение (ГД)"
+              statusLabel={d.status === "on_signing" ? "на утверждении" : d.status === "approved" ? "утверждено" : "ожидает"}
+              circle={d.status === "on_signing" ? "active" : d.status === "approved" ? "done" : "pending"}
+              last
+            />
+          </div>
+        </aside>
+      )}
+
+      </div>{/* /две колонки */}
 
       {confirmDel && (
         <ConfirmSheet
