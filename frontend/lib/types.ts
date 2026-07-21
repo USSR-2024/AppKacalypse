@@ -37,6 +37,7 @@ export interface Task {
   remindAt: string | null;
   completedAt: string | null;
   source: TaskSource;
+  documentId: string | null;   // != null ⇒ системная задача-мост из «Документов» (руками не закрыть)
   createdAt: string;
   updatedAt: string;
 }

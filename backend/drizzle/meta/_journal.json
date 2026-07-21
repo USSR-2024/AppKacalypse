@@ -148,6 +148,13 @@
    "when": 1784910100000,
    "tag": "0020_docs_perms",
    "breakpoints": true
+  },
+  {
+   "idx": 21,
+   "version": "7",
+   "when": 1784910200000,
+   "tag": "0021_doc_task_bridge",
+   "breakpoints": true
   }
  ]
 }

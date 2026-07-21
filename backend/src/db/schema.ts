@@ -241,6 +241,12 @@ export const tasks = pgTable('tasks', {
 
   source: taskSource('source').notNull().default('app'),
 
+  // Задача-мост из модуля «Документы». Не null ⇒ задача СИСТЕМНАЯ: руками статус не
+  // меняют, гасит её только сам движок согласования (см. lib/doc-tasks.ts). Даёт и связь
+  // с карточкой (deep-link). FK — только в SQL (миграция 0021): tasks↔documents циклична,
+  // как currentVersionId, иначе tsc не выведет тип.
+  documentId: uuid('document_id'),
+
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
@@ -249,6 +255,7 @@ export const tasks = pgTable('tasks', {
   statusIdx: index('tasks_status_idx').on(t.status),
   dueIdx: index('tasks_due_idx').on(t.dueAt),
   workspaceIdx: index('tasks_workspace_idx').on(t.workspaceId),
+  documentIdx: index('tasks_document_idx').on(t.documentId),
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -639,6 +646,11 @@ export const documents = pgTable('documents', {
   currentVersionId: uuid('current_version_id'),                    // FK в SQL: циклическая ссылка
   signedVersionId: uuid('signed_version_id'),
 
+  // Трекинг-задача инициатора «провести согласование до конца» (см. lib/doc-tasks.ts):
+  // одна на документ, гаснет, когда маршрут пройден (M3 перенесёт закрытие на подписание).
+  // FK — только в SQL (миграция 0021): цикл tasks↔documents, как currentVersionId.
+  approvalTaskId: uuid('approval_task_id'),
+
   storageLocation: text('storage_location'),                       // где лежит бумажный оригинал
   attrs: jsonb('attrs').notNull().default({}),                     // доп. атрибуты по attr_schema типа
   taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'set null' }),  // связь с задачей трекера
@@ -715,6 +727,9 @@ export const routeSteps = pgTable('route_steps', {
   decidedVersionId: uuid('decided_version_id').references(() => documentVersions.id, { onDelete: 'set null' }),
   isAdHoc: boolean('is_ad_hoc').notNull().default(false),   // добавлен инициатором сверх матрицы
   addedBy: uuid('added_by').references(() => users.id),
+  // Задача-мост согласующего для этого шага (см. lib/doc-tasks.ts): создаётся при
+  // активации шага, гаснет, когда шаг решён. tasks определён выше — ссылка обычная.
+  taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'set null' }),
   dueAt: timestamp('due_at', { withTimezone: true }),
   activatedAt: timestamp('activated_at', { withTimezone: true }),
   decidedAt: timestamp('decided_at', { withTimezone: true }),

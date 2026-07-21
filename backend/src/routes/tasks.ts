@@ -298,6 +298,8 @@ taskRoutes.post('/:id/status', async (c) => {
   const [task] = await db.select().from(t).where(and(eq(t.id, id), eq(t.workspaceId, ws.id))).limit(1);
   if (!task) return c.json({ error: 'not_found' }, 404);
   if (!(await canModify(task, u, ws.role))) return c.json({ error: 'forbidden' }, 403);
+  // Задача-мост из «Документов» — системная: статус ведёт движок согласования, руками нельзя.
+  if (task.documentId) return c.json({ error: 'managed_by_document' }, 409);
   if (task.status === p.data.status) return c.json(task);
 
   const [updated] = await db.update(t).set({

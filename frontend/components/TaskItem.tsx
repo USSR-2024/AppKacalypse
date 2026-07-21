@@ -27,6 +27,9 @@ export function TaskItem({ task }: { task: Task }) {
         ? assignees.map((a) => a.displayName).join(", ")
         : `${assignees[0].displayName} +${assignees.length - 1}`;
   const done = task.status === "done";
+  // Задача-мост из «Документов» — системная: статусом управляет движок согласования,
+  // руками не закрыть (бэк вернёт 409). Показываем замок, а не кликабельный кружок.
+  const managed = !!task.documentId;
   const [confirming, setConfirming] = useState(false);
 
   async function setStatus(next: TaskStatus) {
@@ -45,13 +48,22 @@ export function TaskItem({ task }: { task: Task }) {
 
   return (
     <div className="flex items-start gap-3 rounded-2xl bg-surface px-3.5 py-3">
-      <button
-        onClick={onToggle}
-        className={`mt-0.5 h-5 w-5 shrink-0 rounded-full border-2 ${STATUS_RING[task.status]} transition`}
-        aria-label="Готово"
-      >
-        {done && <span className="block text-center text-[11px] leading-4 text-white">✓</span>}
-      </button>
+      {managed ? (
+        <span
+          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 text-[10px] ${done ? "border-ok bg-ok text-white" : "border-muted text-muted"}`}
+          title="Закроется автоматически, когда согласование/подписание завершится"
+        >
+          {done ? "✓" : "🔒"}
+        </span>
+      ) : (
+        <button
+          onClick={onToggle}
+          className={`mt-0.5 h-5 w-5 shrink-0 rounded-full border-2 ${STATUS_RING[task.status]} transition`}
+          aria-label="Готово"
+        >
+          {done && <span className="block text-center text-[11px] leading-4 text-white">✓</span>}
+        </button>
+      )}
 
       {confirming && (
         <ConfirmSheet
@@ -72,6 +84,7 @@ export function TaskItem({ task }: { task: Task }) {
           {task.title}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+          {managed && <span className="rounded bg-accent/15 px-1.5 py-0.5 text-accent">📄 Согласование</span>}
           {project && (
             <span className="flex items-center gap-1">
               <span className="h-2 w-2 rounded-full" style={{ background: project.color || "#4f8cff" }} />

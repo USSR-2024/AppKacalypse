@@ -10,6 +10,7 @@ import { nextRegistryNumber, visibilityCond, canView, getDocPerms, isFeatureEnab
 import { putVersion, getVersionStream } from '../lib/dms-storage.js';
 import { BLANK_DOCX_B64 } from '../lib/blank-docx.js';
 import { startRoute, activeStepForUser, approveStep, rejectStep, assembleMatrix, type RouteStepInput } from '../lib/route-engine.js';
+import { openTrackingTask, openStepTasks, closeStepTask, cancelOpenStepTasks, closeTrackingTask, type DocMeta } from '../lib/doc-tasks.js';
 import { notifyApprovalStep, notifyApprovalDecision } from '../lib/notify.js';
 import { env } from '../lib/env.js';
 import {
@@ -475,6 +476,10 @@ documentRoutes.post('/:id/submit', async (c) => {
       action: 'status_changed', payload: { from: row.status, to: 'on_approval', registryNumber: number },
     });
     const started = await startRoute(tx, { workspaceId: w.id, documentId: id, steps, definition, actorId: u.sub });
+    // Мост в задачи: инициатору — трекинг-задача, согласующим первой стадии — задачи во «Входящие».
+    const meta: DocMeta = { workspaceId: w.id, documentId: id, docTitle: row.title, registryNumber: number, authorId: row.authorId, dueAt: row.dueAt };
+    await openTrackingTask(tx, meta);
+    await openStepTasks(tx, meta);
     return { registryNumber: number, firstAssignees: started.firstAssignees };
   });
 
@@ -542,7 +547,7 @@ documentRoutes.post('/:id/decision', async (c) => {
   const p = decisionSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!p.success) return c.json({ error: 'bad_request' }, 400);
 
-  const [row] = await db.select({ id: doc.id, title: doc.title, status: doc.status, ownerId: doc.ownerId, authorId: doc.authorId, currentVersionId: doc.currentVersionId })
+  const [row] = await db.select({ id: doc.id, title: doc.title, status: doc.status, ownerId: doc.ownerId, authorId: doc.authorId, currentVersionId: doc.currentVersionId, registryNumber: doc.registryNumber, dueAt: doc.dueAt })
     .from(doc).where(and(eq(doc.id, id), eq(doc.workspaceId, w.id))).limit(1);
   if (!row) return c.json({ error: 'not_found' }, 404);
   if (row.status !== 'on_approval') return c.json({ error: 'not_on_approval' }, 409);
@@ -555,18 +560,26 @@ documentRoutes.post('/:id/decision', async (c) => {
     return c.json({ error: 'remark_required' }, 400);   // вернуть без причины нельзя
   }
 
+  const meta: DocMeta = { workspaceId: w.id, documentId: id, docTitle: row.title, registryNumber: row.registryNumber, authorId: row.authorId, dueAt: row.dueAt };
   const res = await db.transaction(async (tx) => {
     if (p.data.decision === 'approve') {
       const { finished, nextAssignees } = await approveStep(tx, {
         workspaceId: w.id, documentId: id, routeId: step.routeId, stepId: step.stepId, stageNo: step.stageNo,
         currentVersionId: row.currentVersionId, actorId: u.sub, comment: p.data.comment ?? null,
       });
+      // Мост: моя задача-шаг закрыта; маршрут пройден → закрыть трекинг; иначе открыть задачи новой стадии.
+      await closeStepTask(tx, step.stepId);
+      if (finished) await closeTrackingTask(tx, id);
+      else if (nextAssignees.length) await openStepTasks(tx, meta);
       return { outcome: finished ? 'finished' as const : 'approved' as const, nextAssignees };
     }
     await rejectStep(tx, {
       workspaceId: w.id, documentId: id, routeId: step.routeId, stepId: step.stepId, stageNo: step.stageNo,
       currentVersionId: row.currentVersionId, actorId: u.sub, remark: p.data.comment!,
     });
+    // Мост: моя задача-шаг закрыта (я вернул), остальные задачи-шаги этого круга снимаем; трекинг остаётся.
+    await closeStepTask(tx, step.stepId);
+    await cancelOpenStepTasks(tx, step.routeId);
     return { outcome: 'rework' as const, nextAssignees: [] as string[] };
   });
 
