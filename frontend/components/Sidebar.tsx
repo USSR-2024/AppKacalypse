@@ -100,6 +100,47 @@ export function Sidebar({ onNewTask }: { onNewTask: () => void }) {
         {NAV.map((it) => {
           const href = wsHref(ws, it.href);
           const active = path.startsWith(href);
+          // «Документы» — раскрывающийся раздел: В работе / Реестр / Настройки (десктоп-only модуль).
+          if (it.href === "/docs") {
+            const inDocs = path.startsWith(href);
+            const canManage = current?.role === "admin" || current?.role === "owner";
+            const isRegistry = path.startsWith(wsHref(ws, "/docs/registry"));
+            const isSettings = path.startsWith(wsHref(ws, "/docs/settings"));
+            const isInWork = inDocs && !isRegistry && !isSettings;
+            const sub = [
+              { href: "/docs", label: "В работе", on: isInWork },
+              { href: "/docs/registry", label: "Реестр", on: isRegistry },
+              ...(canManage ? [{ href: "/docs/settings", label: "Настройки", on: isSettings }] : []),
+            ];
+            return (
+              <div key={it.href} className="mb-0.5">
+                <Link
+                  href={href}
+                  className={`flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${
+                    inDocs ? "font-medium text-accent" : "text-muted hover:bg-surface-2 hover:text-text"
+                  }`}
+                >
+                  <span className="text-base">{it.icon}</span>
+                  {it.label}
+                </Link>
+                {inDocs && (
+                  <div className="mb-1 ml-5 mt-0.5 flex flex-col border-l border-border pl-3">
+                    {sub.map((s) => (
+                      <Link
+                        key={s.href}
+                        href={wsHref(ws, s.href)}
+                        className={`rounded-lg px-3 py-1.5 text-sm transition ${
+                          s.on ? "font-medium text-accent" : "text-muted hover:bg-surface-2 hover:text-text"
+                        }`}
+                      >
+                        {s.label}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          }
           return (
             <Link
               key={it.href}

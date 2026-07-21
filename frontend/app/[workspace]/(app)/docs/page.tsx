@@ -8,13 +8,14 @@ import { Sheet } from "@/components/Sheet";
 import { DOC_STATUS, DOC_PRIORITY, StatusChip } from "@/lib/docStrings";
 import type { DocRow, DocType, DocPriority, DocInboxItem } from "@/lib/types";
 
-// Базовый список документов. Полный реестр с фасетами и категориями — фаза 6 плана.
+// «В работе» — документы, по которым идёт согласование/подписание. Подписанные и
+// сданные в архив живут в «Реестре» (/docs/registry). Фасеты реестра — след. срез M2.
 export default function DocsPage() {
   const ws = useWs();
   const router = useRouter();
   const [sheet, setSheet] = useState(false);
   const [filter, setFilter] = useState<string>("");
-  const { data, mutate, error } = useSWR<DocRow[]>(`/documents${filter ? `?status=${filter}` : ""}`, fetcher);
+  const { data, mutate, error } = useSWR<DocRow[]>(`/documents${filter ? `?status=${filter}` : "?bucket=active"}`, fetcher);
   const { data: inbox } = useSWR<DocInboxItem[]>("/documents/inbox", fetcher);
   const disabled = error instanceof Error && error.message === "module_disabled";
 
@@ -30,20 +31,22 @@ export default function DocsPage() {
 
   const dl = "ru-RU";
   const tabs: { v: string; label: string }[] = [
-    { v: "", label: "Все" },
+    { v: "", label: "Все в работе" },
     { v: "draft", label: "Черновики" },
     { v: "on_approval", label: "На согласовании" },
     { v: "rework", label: "На корректировке" },
-    { v: "signed", label: "Подписаны" },
+    { v: "approved", label: "Согласованы" },
+    { v: "on_signing", label: "На утверждении" },
   ];
 
   return (
     <main className="px-4 pt-12">
       <header className="mb-5 flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">Документы</h1>
+          <h1 className="text-2xl font-semibold">В работе</h1>
           <p className="mt-1 text-sm text-muted">
-            Карточка документа: файл, версии, согласование, история. Реестр по категориям.
+            Идёт согласование, корректировка или подписание. Завершённые — в{" "}
+            <button onClick={() => router.push(wsHref(ws, "/docs/registry"))} className="text-accent">Реестре</button>.
           </p>
         </div>
         <button onClick={() => router.push(wsHref(ws, "/docs/settings"))}
@@ -88,7 +91,7 @@ export default function DocsPage() {
 
       {data && data.length === 0 && (
         <p className="text-sm text-muted">
-          {filter ? "В этом статусе документов нет." : "Документов пока нет. Создайте первый."}
+          {filter ? "В этом статусе документов нет." : "В работе документов нет. Создайте новый или загляните в Реестр."}
         </p>
       )}
 

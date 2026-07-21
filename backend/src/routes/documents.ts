@@ -54,6 +54,14 @@ documentRoutes.get('/', async (c) => {
     .optional().safeParse(c.req.query('status'));
   if (status.success && status.data) conds.push(eq(doc.status, status.data));
 
+  // Корзина IA: «В работе» (идёт согласование/подписание) vs «Реестр» (подписанные/архив).
+  // Явный status уточняет внутри корзины; без него — вся корзина.
+  else {
+    const bucket = c.req.query('bucket');
+    if (bucket === 'active') conds.push(inArray(doc.status, ['draft', 'on_approval', 'rework', 'approved', 'on_signing']));
+    else if (bucket === 'registry') conds.push(inArray(doc.status, ['signed', 'active', 'expired', 'terminated', 'archived', 'cancelled']));
+  }
+
   const rows = await db
     .select({
       id: doc.id, registryNumber: doc.registryNumber, title: doc.title, status: doc.status,
