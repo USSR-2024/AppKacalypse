@@ -15,8 +15,6 @@ interface Member {
   avatarUrl: string | null;
 }
 
-const bot = process.env.NEXT_PUBLIC_TG_BOT;
-
 export default function MembersPage() {
   const me = useAuth((s) => s.me);
   const { data, error, mutate, isLoading } = useSWR<Member[]>("/members", fetcher);
@@ -42,7 +40,7 @@ export default function MembersPage() {
     setBusy(true);
     try {
       const { code } = await api<{ code: string }>("/members/invite", { method: "POST", body: JSON.stringify({}) });
-      setInvite(`https://t.me/${bot}?start=invite_${code}`);
+      setInvite(`${window.location.origin}/invite/${code}`);
       setCopied(false);
     } finally {
       setBusy(false);
@@ -68,7 +66,7 @@ export default function MembersPage() {
       {/* Пригласить */}
       <section className="mb-6 rounded-2xl bg-surface p-4">
         <h2 className="mb-2 text-sm font-medium">Пригласить в пространство</h2>
-        <p className="mb-3 text-xs text-muted">Отправь ссылку человеку — он зайдёт через бота и подаст заявку, а ты её одобришь ниже.</p>
+        <p className="mb-3 text-xs text-muted">Отправь ссылку человеку — он выберет вход по почте или через Telegram, подаст заявку, а ты её одобришь ниже.</p>
         {invite ? (
           <div className="flex flex-col gap-2">
             <input readOnly value={invite} className="w-full rounded-xl bg-bg px-3 py-2 text-xs outline-none" onFocus={(e) => e.currentTarget.select()} />

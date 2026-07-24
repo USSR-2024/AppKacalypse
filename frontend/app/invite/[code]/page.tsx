@@ -12,10 +12,12 @@ const ROLE_TEXT: Record<string, string> = {
   member: "участником",
 };
 
+const bot = process.env.NEXT_PUBLIC_TG_BOT;
+
 /**
  * Публичная страница приглашения (без входа). Регистрация в appka.space только
- * по такой ссылке: человек вводит почту, получает код — и сразу оказывается в
- * пространстве с той ролью, которая записана в приглашении.
+ * по такой ссылке. Человек выбирает способ: почта (код в письме) или Telegram
+ * (бот) — и в обоих случаях оказывается в пространстве с ролью из приглашения.
  */
 export default function InvitePage() {
   const { code } = useParams<{ code: string }>();
@@ -23,6 +25,7 @@ export default function InvitePage() {
   const setToken = useAuth((s) => s.setToken);
   const [info, setInfo] = useState<InviteInfo | null>(null);
   const [dead, setDead] = useState(false);
+  const [method, setMethod] = useState<"email" | null>(null);
 
   useEffect(() => {
     fetch(`/api/auth/invite/${code}`)
@@ -60,10 +63,39 @@ export default function InvitePage() {
               <br />
               <span className="text-sm text-muted">{ROLE_TEXT[info.role] ?? "участником"}</span>
             </p>
-            <p className="text-center text-xs text-muted">
-              Введите рабочую почту — пришлём код. Он же станет вашим способом входа.
-            </p>
-            <EmailLogin invite={code} onToken={finish} />
+            {method === null && (
+              <>
+                <p className="text-center text-xs text-muted">Как вам удобнее войти?</p>
+                <button
+                  onClick={() => setMethod("email")}
+                  className="w-full rounded-xl bg-accent px-4 py-3 font-medium text-white"
+                >
+                  Продолжить по почте
+                </button>
+                {bot && (
+                  <a
+                    href={`https://t.me/${bot}?start=invite_${code}`}
+                    className="w-full rounded-xl bg-surface-2 px-4 py-3 text-center font-medium"
+                  >
+                    Продолжить через Telegram
+                  </a>
+                )}
+              </>
+            )}
+            {method === "email" && (
+              <>
+                <p className="text-center text-xs text-muted">
+                  Введите рабочую почту — пришлём код. Он же станет вашим способом входа.
+                </p>
+                <EmailLogin invite={code} onToken={finish} />
+                <button
+                  onClick={() => setMethod(null)}
+                  className="text-sm text-muted underline"
+                >
+                  ‹ Другой способ
+                </button>
+              </>
+            )}
           </>
         )}
       </div>
